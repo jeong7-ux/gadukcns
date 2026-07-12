@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * 디자인 토큰 단일 원천 (스토리보드 2장).
+ * Tailwind config가 이 변수를 참조한다. HEX 하드코딩 금지.
+ */
+:root {
+  color-scheme: light; /* 네이티브 컨트롤(날짜픽커·체크박스·스크롤바) 테마 */
+  /* 브랜드/의미 색상 */
+  --color-primary: #1f497d;
+  --color-accent: #2563eb;
+  --color-success: #16a34a;
+  --color-danger: #dc2626;
+  --color-muted: #64748b;
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-text: #0f172a;
+  --color-text-subtle: #64748b;
+  --color-border: #e2e8f0;
+  --color-priority-bg: #eff4fb; /* 우선 고객사 공고 배경(FR-18) — 연한 블루 틴트 */
+
+  /* D-day 3구간(마감 임박도) — 2.2 */
+  --color-dday-urgent: #dc2626; /* D0~3 */
+  --color-dday-soon: #ea580c; /* D4~6 */
+  --color-dday-near: #eab308; /* D7~9 */
+  --color-dday-far: #64748b; /* D10+ */
+
+  /* 타이포 — 제목 700 / 본문 400~500 (2.3) */
+  --font-sans: "Pretendard", "Noto Sans KR", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* ── 다크 모드 (data-theme="dark") ──
+ * 구조색만 재정의하면 토큰 클래스가 전 화면·차트에 자동 반영된다.
+ * 브랜드 네이비는 다크 배경 대비를 위해 밝게 조정. 의미색(success/danger/dday)은 유지. */
+:root[data-theme="dark"] {
+  color-scheme: dark; /* 네이티브 컨트롤도 다크로 */
+  --color-primary: #3b82f6;
+  --color-accent: #60a5fa;
+  --color-muted: #94a3b8;
+  --color-bg: #0f172a;        /* slate-900 */
+  --color-surface: #1e293b;   /* slate-800 */
+  --color-text: #f1f5f9;      /* slate-100 */
+  --color-text-subtle: #94a3b8;
+  --color-border: #334155;    /* slate-700 */
+  --color-priority-bg: #172554; /* 우선 고객사 배경 다크 틴트 */
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* FullCalendar 토큰 정렬 (S-08) */
+.fc {
+  --fc-border-color: var(--color-border);
+  --fc-today-bg-color: rgba(37, 99, 235, 0.06);
+  --fc-page-bg-color: var(--color-surface);
+  font-family: var(--font-sans);
+}
+.fc .fc-button-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+.fc .fc-button-primary:hover {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+}

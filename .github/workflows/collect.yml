@@ -1,0 +1,54 @@
+name: collect
+
+# 매일 07:00 KST(= UTC 22:00) 수집 배치 + 수동 실행
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 07:00 Asia/Seoul
+  workflow_dispatch: {}
+
+# 동시 실행 방지(커서 경합 방지)
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 1) 공고/가격/변경이력 수집 → bids/bid_prices/bid_changes, collect_cursor
+      - name: Collect bids
+        run: node scripts/collect.mjs
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+      # 2) 첨부 다운로드 → Storage → kordoc 추출(extracted_text). 부분 실패 허용.
+      - name: Collect attachments
+        run: node scripts/attachments.mjs
+        env:
+          NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+
+      # 3) AI 보강(요약/임베딩/스코어링/인력매칭) → bids.ai_*, daily_brief
+      - name: AI enrich
+        run: node scripts/ai.mjs
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY }}

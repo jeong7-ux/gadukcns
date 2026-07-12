@@ -1,0 +1,21 @@
+# secrets
+.env.local
+.env*.local
+_workspace/00_input/api_sample_*.json
+
+# node / next
+node_modules/
+.next/
+out/
+dist/
+*.log
+
+# 로컬 파일 저장(분석 산출물·입찰 첨부 실물)
+storage/
+
+# 빌드 산출물
+tsconfig.tsbuildinfo
+
+# 참조용 클론 하네스(자체 .git 포함 — 임베드 방지) / 내부 작업 스캐폴딩
+harness/
+_workspace/

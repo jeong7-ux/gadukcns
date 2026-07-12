@@ -1,0 +1,59 @@
+# Render Blueprint — 나라장터 입찰정보시스템 (웹 + 영구 디스크)
+#   · 웹: Next.js(next start). 로컬 파일저장(storage/)은 영구 디스크(/var/data)에 마운트해 유지.
+#   · 수집 배치(매일 07:00 KST)는 기존 GitHub Actions(.github/workflows/collect.yml)를 사용.
+#     → Render 크론으로 옮기려면 하단 주석(cron) 블록을 활성화하고 GitHub Actions는 비활성화(중복 실행 방지).
+#   · 환경변수는 sync:false(대시보드에서 직접 입력). 절대 커밋 금지.
+services:
+  - type: web
+    name: narajangteo-web
+    runtime: node
+    region: singapore            # 한국 근접 리전
+    plan: starter                # 영구 디스크 사용에 필요(무료 플랜은 디스크 미지원)
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /login
+    autoDeploy: true
+    disk:
+      name: storage
+      mountPath: /var/data       # STORAGE_DIR 와 일치시킬 것
+      sizeGB: 5
+    envVars:
+      - key: STORAGE_DIR
+        value: /var/data
+      - key: NODE_VERSION
+        value: "20"
+      # ── 아래는 대시보드에서 값 입력(재발급된 키 사용) ──
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: HMAC_KEY
+        sync: false
+      - key: APP_MASTER_KEY
+        sync: false
+
+# ── (선택) 수집 배치를 Render 크론으로 운영할 경우: 위 GitHub Actions는 비활성화 ──
+#  - type: cron
+#    name: narajangteo-collect
+#    runtime: node
+#    region: singapore
+#    schedule: "0 22 * * *"       # 07:00 Asia/Seoul (UTC 22:00)
+#    buildCommand: npm ci
+#    startCommand: node scripts/collect.mjs && node scripts/attachments.mjs && node scripts/ai.mjs
+#    envVars:
+#      - key: NARA_SERVICE_KEY
+#        sync: false
+#      - key: SUPABASE_URL
+#        sync: false
+#      - key: SUPABASE_SERVICE_KEY
+#        sync: false
+#      - key: OPENROUTER_API_KEY
+#        sync: false
+#      - key: APP_MASTER_KEY
+#        sync: false
