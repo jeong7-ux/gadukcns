@@ -1,7 +1,9 @@
-// 로컬 파일 서빙 — 세션 검증 후 storage/ 파일 스트리밍. (window.open용 ?token= 사용)
+// 파일 서빙 — 세션 검증 후 Supabase Storage 객체 스트리밍. (window.open용 ?token= 사용)
+//   서버리스(Netlify/Vercel) 호환 — 로컬 디스크 미사용.
 import { NextRequest } from "next/server";
 import { getRequester } from "@/lib/server/auth";
-import { readLocal, contentType } from "@/lib/storage/local";
+import { downloadBlob } from "@/lib/storage/blob";
+import { contentType } from "@/lib/storage/local";
 
 export const runtime = "nodejs";
 
@@ -15,7 +17,7 @@ export async function GET(
 
   const rel = params.path.map((s) => decodeURIComponent(s)).join("/");
   try {
-    const buf = await readLocal(rel);
+    const buf = await downloadBlob(rel); // Supabase Storage
     const dl = req.nextUrl.searchParams.get("download") === "1";
     const name = rel.split("/").pop() ?? "file";
     return new Response(new Uint8Array(buf), {

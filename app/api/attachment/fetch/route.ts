@@ -1,7 +1,8 @@
-// 입찰 첨부 로컬 저장: bid_attachments.file_url(나라장터) 다운로드 → storage/bid-attachments 저장 + 메타 갱신.
+// 입찰 첨부 저장: bid_attachments.file_url(나라장터) 다운로드 → Supabase Storage(attachments 버킷) → 메타 갱신.
+//   서버리스(Netlify/Vercel) 호환 — 로컬 디스크 미사용. 배치(attachments.mjs)와 동일 버킷 사용.
 import { NextRequest, NextResponse } from "next/server";
 import { getRequester, serviceClient } from "@/lib/server/auth";
-import { saveLocal, safeName } from "@/lib/storage/local";
+import { uploadBlob, asciiKey } from "@/lib/storage/blob";
 
 export const runtime = "nodejs";
 
@@ -28,9 +29,11 @@ export async function POST(req: NextRequest) {
     if (!r.ok) return NextResponse.json({ error: `원본 다운로드 실패(${r.status})` }, { status: 502 });
     const buf = Buffer.from(await r.arrayBuffer());
 
-    const name = safeName(att.file_name || `${att.seq}`);
-    const rel = `bid-attachments/${att.bid_no}_${att.bid_seq}/${att.seq}_${name}`;
-    await saveLocal(rel, buf);
+    // Storage 키는 ASCII만(한글 표시명은 DB file_name 유지). 버킷 프리픽스 포함 storage_path.
+    const name = asciiKey(att.file_name || `${att.seq}`);
+    const rel = `attachments/${att.bid_no}/${att.bid_seq}/${att.seq}_${name}`;
+    const ct = r.headers.get("content-type") || "application/octet-stream";
+    await uploadBlob(rel, buf, ct);
 
     const { error } = await svc
       .from("bid_attachments")

@@ -10,8 +10,8 @@ out/
 dist/
 *.log
 
-# 로컬 파일 저장(분석 산출물·입찰 첨부 실물)
-storage/
+# 로컬 파일 저장(분석 산출물·입찰 첨부 실물) — 루트 전용(lib/storage 소스코드는 포함해야 함)
+/storage/
 
 # 빌드 산출물
 tsconfig.tsbuildinfo

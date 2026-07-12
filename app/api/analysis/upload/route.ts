@@ -1,7 +1,9 @@
-// FR-22 (로컬 저장): AI 분석 결과 HTML을 storage/analysis-reports 에 저장 + analysis_reports 메타 upsert.
+// FR-22: AI 분석 결과 HTML을 Supabase Storage(analysis-reports 버킷)에 저장 + analysis_reports 메타 upsert.
+//   서버리스(Netlify/Vercel) 호환 — 로컬 디스크 미사용.
 import { NextRequest, NextResponse } from "next/server";
 import { getRequester, serviceClient } from "@/lib/server/auth";
-import { saveLocal } from "@/lib/storage/local";
+import { uploadBlob } from "@/lib/storage/blob";
+import { contentType } from "@/lib/storage/local";
 
 export const runtime = "nodejs";
 
@@ -18,12 +20,12 @@ export async function POST(req: NextRequest) {
     const bidSeq = String(form.get("bid_seq") ?? "");
     const docType = String(form.get("doc_type") ?? "");
     const fileName = String(form.get("file_name") ?? "");
-    const storagePath = String(form.get("storage_path") ?? "");
+    const storagePath = String(form.get("storage_path") ?? ""); // analysis-reports/{bid}_{seq}/{date}_{slug}.html
     if (!file || !bidNo || !docType || !storagePath) {
       return NextResponse.json({ error: "필수 항목 누락" }, { status: 400 });
     }
     const buf = Buffer.from(await file.arrayBuffer());
-    await saveLocal(storagePath, buf); // storage/analysis-reports/...
+    await uploadBlob(storagePath, buf, contentType(storagePath)); // Supabase Storage
 
     const svc = serviceClient();
     const { error } = await svc.from("analysis_reports").upsert(

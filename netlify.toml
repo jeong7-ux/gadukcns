@@ -1,0 +1,14 @@
+# Netlify 설정 — 나라장터 입찰정보시스템 (Next.js SSR + API 라우트)
+#   · @netlify/plugin-nextjs 로 SSR/Route Handler를 Netlify Functions로 실행.
+#   · 파일저장은 Supabase Storage 사용(로컬 디스크 불필요) → 서버리스 호환.
+#   · 환경변수는 Netlify UI(Site settings → Environment variables)에서 주입.
+#   · 수집 배치(매일 07:00 KST)는 기존 GitHub Actions 사용.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
