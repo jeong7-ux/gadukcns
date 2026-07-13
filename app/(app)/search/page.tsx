@@ -59,6 +59,24 @@ function SearchInner() {
     setChipInput("");
   }
 
+  async function deleteGroup(groupId: number, name: string) {
+    if (!confirm(`'${name}' 그룹을 삭제할까요? 되돌릴 수 없습니다.`)) return;
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const res = await fetch(`/api/keyword-groups?id=${groupId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      alert(`삭제 실패: ${j.error ?? res.status}`);
+      return;
+    }
+    if (selected === groupId) setSelected(null); // 선택 그룹이 삭제되면 선택 해제
+    groupsQ.refetch();
+  }
+
   async function saveGroup() {
     setSaveMsg(null);
     if (!name || chips.length === 0) {
@@ -106,17 +124,27 @@ function SearchInner() {
                 <ul className="space-y-1">
                   {groupsQ.data!.map((g) => (
                     <li key={g.group_id}>
-                      <button
-                        onClick={() => setSelected(g.group_id)}
-                        className={`flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm ${
-                          selected === g.group_id
-                            ? "bg-primary/10 font-semibold text-primary"
-                            : "hover:bg-bg"
-                        }`}
-                      >
-                        <span>{g.name}</span>
-                        <Pill tone="accent">{g.match_logic}</Pill>
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setSelected(g.group_id)}
+                          className={`flex flex-1 items-center justify-between rounded-md px-2 py-2 text-left text-sm ${
+                            selected === g.group_id
+                              ? "bg-primary/10 font-semibold text-primary"
+                              : "hover:bg-bg"
+                          }`}
+                        >
+                          <span>{g.name}</span>
+                          <Pill tone="accent">{g.match_logic}</Pill>
+                        </button>
+                        <button
+                          onClick={() => deleteGroup(g.group_id, g.name)}
+                          title="그룹 삭제"
+                          aria-label={`${g.name} 그룹 삭제`}
+                          className="shrink-0 rounded-md px-1.5 py-2 text-subtle hover:bg-danger/10 hover:text-danger"
+                        >
+                          🗑
+                        </button>
+                      </div>
                       <div className="flex flex-wrap gap-1 px-2 pb-1">
                         {g.keywords.map((k) => (
                           <span

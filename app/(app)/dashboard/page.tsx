@@ -36,7 +36,8 @@ export default function DashboardPage() {
 
   const bidsQ = useQuery({
     queryKey: ["bids", filters],
-    queryFn: () => fetchBids(supabase, filters, group),
+    // 주력사업 위주: 주력 점수 ≥ 4 만 노출 (S-10 '마감 임박·액션'과 동일 기준)
+    queryFn: () => fetchBids(supabase, filters, group, { coreOnly: true }),
   });
 
   // FR-07 실시간 구독 (bids 변경 시 목록 자동 갱신)

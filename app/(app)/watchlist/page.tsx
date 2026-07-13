@@ -68,6 +68,7 @@ function WatchlistInner() {
   const q = useQuery({
     queryKey: ["watchlist"],
     queryFn: async (): Promise<WatchRow[]> => {
+      const today = new Date().toISOString().slice(0, 10); // 마감된 사업 제외 기준(오늘)
       const { data, error } = await supabase.from("watchlist").select("*");
       if (error) throw error;
       const wl = (data as WatchItem[]) ?? [];
@@ -90,6 +91,8 @@ function WatchlistInner() {
           order_org: map.get(`${w.bid_no}|${w.bid_seq}`)?.order_org ?? null,
           est_price: map.get(`${w.bid_no}|${w.bid_seq}`)?.est_price ?? null,
         }))
+        // 마감된 사업 제외: 마감일 지남 숨김(마감일 미정은 유지). 전 기능 일관 기준.
+        .filter((w) => !w.deadline_dt || w.deadline_dt.slice(0, 10) >= today)
         .sort((a, b) => (daysUntil(a.deadline_dt) ?? 9999) - (daysUntil(b.deadline_dt) ?? 9999));
     },
   });

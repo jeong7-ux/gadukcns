@@ -22,3 +22,4 @@
 | 2026-07-11 | AI 라이브 E2E + 모델 ID 정정 | scripts/ai.mjs | OpenRouter 유효 모델(claude-haiku-4.5)로 수정, 요약·임베딩·brief 실동작 확인 |
 | 2026-07-13 | 회원가입 OTP 제거·S-11 아이디 표시·차트 다크모드 | app/(auth)/register·api/{auth,admin}·dashboard/stats | 단순 가입요청(승인 즉시 사용), 이메일 병합 표시, recharts 토큰화 |
 | 2026-07-13 | 배포: GitHub + Netlify, 파일저장 Supabase Storage 이전 | lib/storage/blob.ts·api 3라우트·netlify.toml·.gitignore | 서버리스 호환, https://dynamic-froyo-f8fc5d.netlify.app 라이브(자동배포) |
+| 2026-07-13 | 주력점수 표준화(coreScore)·마감제외 전면화·S-04/05 정렬·그룹삭제·S-10 v3 재구현 | lib/queries/{score,bids,stats}.ts·app/(app) 4화면·api/keyword-groups·docs v3 2종 | 실측 기반 3축(마감순위·고객사·주력4~9) 대시보드, 검색 그룹 우선정렬·삭제 |

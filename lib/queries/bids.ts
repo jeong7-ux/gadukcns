@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bid, KeywordGroup } from "@/lib/supabase/types";
 import type { BidFilters } from "@/components/bids/FilterBar";
+import { coreScore } from "@/lib/queries/score";
 
 const BID_COLS =
   "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,updated_at";
@@ -12,20 +13,25 @@ const BID_COLS =
 export async function fetchBids(
   supabase: SupabaseClient,
   filters: BidFilters,
-  group: KeywordGroup | null
+  group: KeywordGroup | null,
+  opts?: { coreOnly?: boolean }
 ): Promise<Bid[]> {
+  // coreOnly(S-04 입찰목록): 주력사업 점수(base−exclude) ≥ 4 만 노출.
+  // 미지정(S-05 키워드그룹 검색 등): 총점 > 2 전체 — 검색은 주력 무관하게 매칭 결과를 보여줘야 함.
+  const coreOnly = opts?.coreOnly ?? false;
   // 오늘(로컬) 00:00 이후 마감만 = 입찰 마감 공고 제외
   const todayStr = new Date().toISOString().slice(0, 10);
   let q = supabase
     .from("bids")
     .select(BID_COLS)
     .is("archived_at", null) // 정리(아카이브)된 공고 숨김
-    .gt("score", 2) // 가중치 2 이하(score ≤ 2) 사업 제외
     .or(`deadline_dt.gte.${todayStr},deadline_dt.is.null`) // 입찰 마감 사업 제외(마감일 미정은 유지)
     // FR-18: 고객사(org 룰 가중) 공고가 상단에 오도록 점수 우선, 그다음 최신순
     .order("score", { ascending: false })
     .order("notice_dt", { ascending: false })
     .limit(200);
+  // 점수 프리필터: coreOnly면 주력≥4 후보(총점≥4, 주력점수 ≤ 총점이므로 안전), 아니면 총점>2
+  q = coreOnly ? q.gte("score", 4) : q.gt("score", 2);
 
   if (filters.org) q = q.ilike("order_org", `%${filters.org}%`);
   if (filters.contractMethod)
@@ -95,34 +101,39 @@ export async function fetchBids(
     }
   }
 
-  // 우선순위 정렬: ① 주력사업(키워드 점수) → ② 고객사 → ③ 최신 공고순
-  //   주력사업 점수 = score_breakdown.base(키워드/계약) − exclude. 없으면 총점으로 폴백.
-  const kwScore = (b: Bid): number => {
-    const bd = b.ai_flags?.score_breakdown as
-      | { base?: number; exclude?: number }
-      | undefined;
-    if (bd && typeof bd.base === "number") return bd.base - (bd.exclude ?? 0);
-    return b.score ?? 0;
-  };
+  // 우선순위 정렬: ① 고객사(⭐) → ② 마감일 임박순(오름차순, 마감일 미정은 뒤로)
   bids.sort((a, b) => {
-    const kb = kwScore(b) - kwScore(a);
-    if (kb !== 0) return kb; // ① 주력사업 관련성
     const ca = a.client_name ? 1 : 0;
     const cb = b.client_name ? 1 : 0;
-    if (cb !== ca) return cb - ca; // ② 고객사
-    return (b.notice_dt ?? "").localeCompare(a.notice_dt ?? ""); // ③ 최신
+    if (cb !== ca) return cb - ca; // ① 고객사 우선
+    // ② 마감일 임박순 — 마감일 미정(null)은 맨 뒤로
+    const da = a.deadline_dt ?? "9999-12-31";
+    const db = b.deadline_dt ?? "9999-12-31";
+    return da.localeCompare(db);
   });
 
-  return bids;
+  // 주력사업 위주(coreOnly): 주력 점수(base−exclude) ≥ 4 만 노출 (S-10 '마감 임박·액션'과 동일 기준).
+  // 발주/고객사 가산만으로 점수가 오른 공고는 목록에서 제외. 검색(coreOnly=false)은 전체 유지.
+  if (!coreOnly) return bids;
+  const CORE_MIN = 4;
+  return bids.filter((b) => coreScore(b.ai_flags, b.score) >= CORE_MIN);
 }
 
 export async function fetchKeywordGroups(
   supabase: SupabaseClient
 ): Promise<KeywordGroup[]> {
-  const { data, error } = await supabase
-    .from("keyword_groups")
-    .select("*")
-    .order("created_at", { ascending: false });
+  const { data, error } = await supabase.from("keyword_groups").select("*");
   if (error) throw error;
-  return (data as KeywordGroup[]) ?? [];
+  const groups = (data as KeywordGroup[]) ?? [];
+  // 우선 정렬: ① 감리 → ② 정보전략계획·ISP·ISMP 계열 → ③ 그 외는 그룹명(가나다)순.
+  //   그룹명/키워드에 우선 키워드가 있으면 상단. exclude는 판정에서 제외(제외어이므로).
+  const rankOf = (g: KeywordGroup): number => {
+    const hay = `${g.name} ${(g.keywords ?? []).join(" ")}`.toLowerCase();
+    if (hay.includes("감리")) return 0;
+    if (["정보전략계획", "정보화전략계획", "isp", "ismp"].some((k) => hay.includes(k))) return 1;
+    return 2;
+  };
+  return groups.sort(
+    (a, b) => rankOf(a) - rankOf(b) || a.name.localeCompare(b.name, "ko")
+  );
 }
