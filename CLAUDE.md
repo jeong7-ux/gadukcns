@@ -20,3 +20,5 @@
 | 2026-07-11 | 실 API 실측 반영 | nara-collector, collector-engineer, scripts | 라이브 검증으로 op명/필드/변경·첨부 방식 정정 |
 | 2026-07-11 | 스키마 배포 결함 2건 수정 | supabase/schema.sql | 함수 순서(42P01)·생성컬럼 immutable(42P17) → status 파생 전환 |
 | 2026-07-11 | AI 라이브 E2E + 모델 ID 정정 | scripts/ai.mjs | OpenRouter 유효 모델(claude-haiku-4.5)로 수정, 요약·임베딩·brief 실동작 확인 |
+| 2026-07-13 | 회원가입 OTP 제거·S-11 아이디 표시·차트 다크모드 | app/(auth)/register·api/{auth,admin}·dashboard/stats | 단순 가입요청(승인 즉시 사용), 이메일 병합 표시, recharts 토큰화 |
+| 2026-07-13 | 배포: GitHub + Netlify, 파일저장 Supabase Storage 이전 | lib/storage/blob.ts·api 3라우트·netlify.toml·.gitignore | 서버리스 호환, https://dynamic-froyo-f8fc5d.netlify.app 라이브(자동배포) |
