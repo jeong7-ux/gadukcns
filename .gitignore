@@ -19,3 +19,6 @@ tsconfig.tsbuildinfo
 # 참조용 클론 하네스(자체 .git 포함 — 임베드 방지) / 내부 작업 스캐폴딩
 harness/
 _workspace/
+
+# 스크린샷 캡처(로컬)
+화면 캡처*.png

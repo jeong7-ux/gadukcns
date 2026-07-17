@@ -7,6 +7,7 @@ export interface DashboardData {
   clients: DashClient[];
   watch: DashWatch[];
   groups: DashGroup[]; // keyword_groups (감리/컨설팅 분류용)
+  trendBids: { notice_dt: string | null; biz_category: "감리" | "컨설팅" | null }[]; // 마감 무관 전체(추이용)
   brief: { brief_date: string; summary: string | null; top_bids: unknown } | null;
   lastCollect: string | null;
   totalBids: number;
@@ -72,6 +73,7 @@ export async function fetchDashboardData(
     rulesRes,
     clientsCntRes,
     attRes,
+    trendRes,
   ] = await Promise.all([
     supabase
       .from("bids")
@@ -91,6 +93,8 @@ export async function fetchDashboardData(
     supabase.from("rules").select("id", head).eq("is_active", true),
     supabase.from("clients").select("client_id", head),
     supabase.from("bid_attachments").select("bid_no").limit(5000),
+    // 추이용: 마감 무관 전체 감리/컨설팅(공고일 기준 추이 — 마감된 공고도 포함)
+    supabase.from("bids").select("notice_dt,biz_category").is("archived_at", null).not("biz_category", "is", null).limit(8000),
   ]);
 
   // 첨부 정규화된 고유 공고 수 (아카이브 무관 — 근사)
@@ -123,6 +127,7 @@ export async function fetchDashboardData(
     clients: (clientsRes.data as DashClient[]) ?? [],
     watch: (watchRes.data as DashWatch[]) ?? [],
     groups: (groupsRes.data as DashGroup[]) ?? [],
+    trendBids: (trendRes.data as DashboardData["trendBids"]) ?? [],
     brief: (briefRes.data as DashboardData["brief"]) ?? null,
     lastCollect: (cursorRes.data as { last_reg_dt: string } | null)?.last_reg_dt ?? null,
     totalBids: totalRes.count ?? 0,

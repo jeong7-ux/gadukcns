@@ -173,7 +173,8 @@ async function main() {
 
   let q = sb.from('bids').select('bid_no,bid_seq,title,order_org,demand_org,contract_method,est_price,raw').is('archived_at', null).order('notice_dt', { ascending: false });
   if (CLASSIFY_MIN_SCORE) q = q.gt('score', Number(CLASSIFY_MIN_SCORE));
-  if (SAMPLE) q = q.limit(SAMPLE);
+  if (process.env.CLASSIFY_UNCLASSIFIED_ONLY) q = q.is('biz_category', null); // 미분류만(대량 반복 처리용)
+  q = q.limit(SAMPLE || 1000); // PostgREST 기본 1000 명시
   const { data: bids, error } = await q;
   if (error) { console.error('[FATAL] bids 조회 실패:', error.message); process.exit(1); }
   console.log(`[INFO] 대상 bids: ${bids.length}건`);

@@ -94,16 +94,19 @@ export default function StatsPage() {
       </div>
 
       {/* 상단: 좌(요약·도넛, 고정폭) · 피드(나머지 최대폭) */}
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[520px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[560px_minmax(0,1fr)]">
         {/* ── 좌 컬럼 ── */}
         <div className="space-y-4">
           <SummaryKpis m={m} canWatch={canWatch} />
           <ProgressDonut m={m} />
         </div>
 
-        {/* ── 피드 (최대폭) ── */}
-        <div className="space-y-4">
-          <FeedTable rows={feed} />
+        {/* ── 피드: 좌측(요약+입찰 마감 현황) 높이에 맞춰 하단 정렬 ──
+             absolute로 행 높이 계산에서 제외 → 그리드 행은 좌측 컬럼 높이로 고정, 목록은 그 안에서 스크롤 */}
+        <div className="relative min-h-0">
+          <div className="absolute inset-0 flex flex-col">
+            <FeedTable rows={feed} />
+          </div>
         </div>
       </div>
 
@@ -237,11 +240,9 @@ function FeedTable({ rows }: { rows: Row[] }) {
     컨설팅: rows.filter((b) => b.cat === "컨설팅").length,
   };
   const filtered = tab === "전체" ? rows : rows.filter((b) => b.cat === tab);
-  const view = filtered.slice(0, 11);
-  // "전체 목록 보기" → S-04를 현재 탭 조건으로 조회
-  const listHref = tab === "전체" ? "/dashboard?view=all" : `/dashboard?cat=${tab}`;
+  const view = filtered; // 전체 렌더(보드 내부 스크롤)
   return (
-    <Card>
+    <Card className="flex min-h-0 flex-1 flex-col">
       <CardHeader title="입찰 정보 목록" action={<span className="text-xs text-subtle">수집일 최신순</span>} />
       {/* 탭: 전체 / 감리 / 컨설팅 */}
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
@@ -257,9 +258,9 @@ function FeedTable({ rows }: { rows: Row[] }) {
           </button>
         ))}
       </div>
-      <div className="overflow-x-auto">
+      <div className="min-h-0 flex-1 overflow-auto">
         <table className="w-full min-w-[560px] text-left text-xs">
-          <thead className="border-b border-border text-subtle">
+          <thead className="sticky top-0 z-10 border-b border-border bg-surface text-subtle">
             <tr>
               <InfoHeaders />
             </tr>
@@ -294,13 +295,6 @@ function FeedTable({ rows }: { rows: Row[] }) {
           </tbody>
         </table>
       </div>
-      {filtered.length > 11 && (
-        <div className="border-t border-border p-2 text-center">
-          <Link href={listHref} className="text-xs text-accent hover:underline">
-            전체 목록 보기 → (외 {filtered.length - 11}건)
-          </Link>
-        </div>
-      )}
     </Card>
   );
 }
@@ -433,11 +427,12 @@ function compute(d: DashboardData) {
   });
 
   // ── 분류별 입찰 공고 추이 (일별 신규 등록, 21일) — 감리 / 컨설팅 ──
+  //   마감 무관: 노출(마감전)이 아니라 전체 감리/컨설팅(d.trendBids)에서 공고일 기준 집계.
   const days = lastNDays(21);
   const trendFor = (cat: "감리" | "컨설팅") =>
     days.map((d0) => ({
       date: fmtMD(d0),
-      count: rows.filter((b) => b.cat === cat && b.notice_dt && sameDay(new Date(b.notice_dt), d0)).length,
+      count: d.trendBids.filter((b) => b.biz_category === cat && b.notice_dt && sameDay(new Date(b.notice_dt), d0)).length,
     }));
   const trendGamri = trendFor("감리");
   const trendConsult = trendFor("컨설팅");
@@ -484,7 +479,7 @@ function DashboardSkeleton() {
         desc="실시간 모니터링 데이터를 불러오는 중…"
       />
       <Block className="mb-4 h-10" />
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[520px_minmax(0,1fr)]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[560px_minmax(0,1fr)]">
         <div className="space-y-4">
           <Block className="h-52" />
           <Block className="h-72" />
