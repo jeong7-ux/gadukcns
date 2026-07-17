@@ -36,6 +36,7 @@ const {
   NARA_MAX_PAGES = '200',         // 폭주 방지 안전 상한
   NARA_BID_TYPES = 'servc',       // 수집 유형(쉼표구분): servc|cnstwk|thng. 기본 용역만.
   COLLECT_SOURCE = 'nara',        // collect_cursor.source
+  COLLECT_TRIGGER = 'cron',       // collect_runs.trigger — cron(자동) / manual
 } = process.env;
 
 // 유형 → 오퍼레이션 접미사(실측 확정). 목록/가격 op는 접미사만 상이.
@@ -61,6 +62,71 @@ function fail(context, err) {
   const msg = err && err.stack ? err.stack : String(err);
   errors.push(`${context}: ${msg}`);
   console.error(`[ERROR] ${context}: ${msg}`);
+}
+
+// ---------------------------------------------------------------------
+// 수집 실행 로그(collect_runs) — S-10 수집 모니터용. 검증 단계·건수·오류 집계.
+//   테이블 미배포(collect_runs.sql 미적용) 시에도 배치는 정상 동작(로깅만 건너뜀).
+// ---------------------------------------------------------------------
+const runStats = {
+  pages: 0,
+  scanned: 0,
+  bidsUpserted: 0,
+  pricesUpserted: 0,
+  changesAppended: 0,
+  cursorAdvanced: false,
+};
+const checks = { env_ok: false, api_reachable: false, upsert_ok: false, status_refreshed: false };
+let runId = null;
+
+async function startRun(sb, windowBgn, windowEnd) {
+  try {
+    const { data, error } = await sb
+      .from('collect_runs')
+      .insert({
+        source: COLLECT_SOURCE,
+        trigger: COLLECT_TRIGGER === 'manual' ? 'manual' : 'cron',
+        status: 'running',
+        window_bgn: windowBgn,
+        window_end: windowEnd,
+        checks,
+      })
+      .select('id')
+      .single();
+    if (error) throw new Error(error.message);
+    runId = data?.id ?? null;
+  } catch (e) {
+    console.warn(`[WARN] collect_runs 시작 기록 건너뜀(테이블 미배포 가능): ${e?.message ?? e}`);
+  }
+}
+
+async function finishRun(sb, startedMs) {
+  if (runId == null) return; // 시작 기록 실패 시 종료 기록도 생략
+  const durationMs = Date.now() - startedMs;
+  // 상태: 무오류=success / 오류+일부적재=partial / 오류+적재0=failed
+  const status = !hadError ? 'success' : runStats.bidsUpserted > 0 ? 'partial' : 'failed';
+  try {
+    const { error } = await sb
+      .from('collect_runs')
+      .update({
+        status,
+        finished_at: new Date().toISOString(),
+        duration_ms: durationMs,
+        pages: runStats.pages,
+        scanned: runStats.scanned,
+        bids_upserted: runStats.bidsUpserted,
+        prices_upserted: runStats.pricesUpserted,
+        changes_appended: runStats.changesAppended,
+        cursor_advanced: runStats.cursorAdvanced,
+        error_count: errors.length,
+        errors: errors.slice(0, 20).map((e) => String(e).slice(0, 500)),
+        checks,
+      })
+      .eq('id', runId);
+    if (error) throw new Error(error.message);
+  } catch (e) {
+    console.warn(`[WARN] collect_runs 종료 기록 실패: ${e?.message ?? e}`);
+  }
 }
 
 // ---------------------------------------------------------------------
@@ -309,7 +375,12 @@ async function collectBids(sb, ops, type, inqryBgnDt, inqryEndDt) {
       break; // 목록 실패 시 이 배치의 커서는 전진하지 않음(hadError)
     }
 
+    // 검증: 목록 응답 정상 수신(resultCode 00) → API 도달 확인
+    checks.api_reachable = true;
+    runStats.pages++;
+
     const items = itemsOf(body);
+    runStats.scanned += items.length;
     if (items.length === 0) break;
 
     const rows = [];
@@ -331,7 +402,11 @@ async function collectBids(sb, ops, type, inqryBgnDt, inqryEndDt) {
         .from('bids')
         .upsert(rows, { onConflict: 'bid_no,bid_seq' });
       if (error) fail(`[${type}] bids upsert pageNo=${pageNo}`, error);
-      else console.log(`[INFO] [${type}] bids upsert: page ${pageNo}, ${rows.length}건`);
+      else {
+        runStats.bidsUpserted += rows.length;
+        checks.upsert_ok = true;
+        console.log(`[INFO] [${type}] bids upsert: page ${pageNo}, ${rows.length}건`);
+      }
     }
 
     const total = Number(body.totalCount ?? 0);
@@ -359,6 +434,7 @@ async function collectPrice(sb, priceOp, bid) {
       .from('bid_prices')
       .upsert(row, { onConflict: 'bid_no' });
     if (error) fail(`bid_prices upsert ${bid.bid_no}`, error);
+    else runStats.pricesUpserted++;
   } catch (e) {
     fail(`가격 수집 ${bid.bid_no}`, e);
   }
@@ -403,7 +479,10 @@ async function appendChanges(sb, changes) {
       if (!fresh.length) continue;
       const { error } = await sb.from('bid_changes').insert(fresh);
       if (error) fail(`bid_changes insert ${bidNo}`, error);
-      else console.log(`[INFO] bid_changes append: ${bidNo}, ${fresh.length}건`);
+      else {
+        runStats.changesAppended += fresh.length;
+        console.log(`[INFO] bid_changes append: ${bidNo}, ${fresh.length}건`);
+      }
     } catch (e) {
       fail(`변경이력 append ${bidNo}`, e);
     }
@@ -439,6 +518,7 @@ async function refreshBidsStatus(sb) {
     console.warn(`[WARN] refresh_bids_status 실패(수집은 성공 처리): ${error.message}`);
     return;
   }
+  checks.status_refreshed = true;
   console.log('[INFO] refresh_bids_status: status 당일 기준 신선화 완료');
 }
 
@@ -451,6 +531,7 @@ async function main() {
     console.error('[FATAL] NARA_BID_TYPES가 비어 있음');
     process.exit(1);
   }
+  checks.env_ok = true;
   const sb = makeClient();
   const started = Date.now();
   console.log(`[INFO] collect 시작 ${new Date().toISOString()} — 유형: ${BID_TYPES.join(',')}`);
@@ -459,6 +540,9 @@ async function main() {
   const end = new Date();
   const inqryBgnDt = toKstInqryDt(bgn);
   const inqryEndDt = toKstInqryDt(end);
+
+  // 수집 실행 로그 시작(running) — 테이블 미배포 시 조용히 건너뜀
+  await startRun(sb, inqryBgnDt, inqryEndDt);
 
   let maxRegIso = null;
 
@@ -498,6 +582,7 @@ async function main() {
   if (!hadError) {
     try {
       await updateCursor(sb, maxRegIso);
+      runStats.cursorAdvanced = !!maxRegIso; // 실제 전진한 경우만 true
     } catch (e) {
       fail('커서 갱신', e);
     }
@@ -507,6 +592,9 @@ async function main() {
       `bids/prices/changes upsert는 멱등이므로 안전.`
     );
   }
+
+  // 수집 실행 로그 종료(success/partial/failed) — 검증단계·건수·오류 기록
+  await finishRun(sb, started);
 
   const secs = ((Date.now() - started) / 1000).toFixed(1);
   console.log(`[INFO] collect 종료 (${secs}s) 오류=${errors.length}`);

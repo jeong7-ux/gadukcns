@@ -1,9 +1,8 @@
 name: collect
 
-# 매일 07:00 KST(= UTC 22:00) 수집 배치 + 수동 실행
+# 정의서 v1.1: 자동(스케줄) 수집 폐지 — 수집은 인앱 "바로수집"(수동) 전용.
+#   스케줄 cron 제거. 이 워크플로우는 소급 분류 백필 등 필요 시 수동 실행(dispatch)만 유지.
 on:
-  schedule:
-    - cron: '0 22 * * *'   # 07:00 Asia/Seoul
   workflow_dispatch: {}
 
 # 동시 실행 방지(커서 경합 방지)
@@ -35,6 +34,7 @@ jobs:
           NARA_SERVICE_KEY: ${{ secrets.NARA_SERVICE_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          COLLECT_TRIGGER: cron
 
       # 2) 첨부 다운로드 → Storage → kordoc 추출(extracted_text). 부분 실패 허용.
       - name: Collect attachments

@@ -4,21 +4,26 @@ import type { BidFilters } from "@/components/bids/FilterBar";
 import { coreScore } from "@/lib/queries/score";
 
 const BID_COLS =
-  "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,updated_at";
+  "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,biz_category,updated_at";
 
 /**
  * S-04/S-05 공통 입찰 조회. RLS(bids_read: active면 R)에 정렬.
  * 키워드그룹 AND/OR(FR-13)은 title 기준 ilike로 근사 매칭.
+ *
+ * KPI 연동(S-10 입찰 공고 요약 → S-04): cat(감리/컨설팅)·today(당일신규)·showAll(전체공고).
+ *   이 조건들이 오면 "요약 KPI 기준"과 건수를 맞추기 위해 주력점수(coreScore≥4) 필터를 우회한다
+ *   — 적재분은 이미 AI 분류(감리/컨설팅)로 선별됐으므로 biz_category가 곧 관련성이다.
  */
 export async function fetchBids(
   supabase: SupabaseClient,
   filters: BidFilters,
   group: KeywordGroup | null,
-  opts?: { coreOnly?: boolean }
+  opts?: { coreOnly?: boolean; cat?: "감리" | "컨설팅" | null; today?: boolean; showAll?: boolean }
 ): Promise<Bid[]> {
-  // coreOnly(S-04 입찰목록): 주력사업 점수(base−exclude) ≥ 4 만 노출.
-  // 미지정(S-05 키워드그룹 검색 등): 총점 > 2 전체 — 검색은 주력 무관하게 매칭 결과를 보여줘야 함.
-  const coreOnly = opts?.coreOnly ?? false;
+  // KPI 연동 여부 — cat/today/showAll 중 하나라도 있으면 요약 기준 조회(주력필터 우회)
+  const kpiMode = !!(opts?.cat || opts?.today || opts?.showAll);
+  // coreOnly(S-04 입찰목록): 주력사업 점수(base−exclude) ≥ 4 만 노출. KPI 연동 시엔 우회.
+  const coreOnly = !kpiMode && (opts?.coreOnly ?? false);
   // 오늘(로컬) 00:00 이후 마감만 = 입찰 마감 공고 제외
   const todayStr = new Date().toISOString().slice(0, 10);
   let q = supabase
@@ -30,8 +35,12 @@ export async function fetchBids(
     .order("score", { ascending: false })
     .order("notice_dt", { ascending: false })
     .limit(200);
-  // 점수 프리필터: coreOnly면 주력≥4 후보(총점≥4, 주력점수 ≤ 총점이므로 안전), 아니면 총점>2
-  q = coreOnly ? q.gte("score", 4) : q.gt("score", 2);
+  // 점수 프리필터: KPI 연동이면 우회(전량), coreOnly면 총점≥4, 아니면 총점>2
+  if (!kpiMode) q = coreOnly ? q.gte("score", 4) : q.gt("score", 2);
+
+  // KPI 조건: 분류(감리/컨설팅) / 당일신규(notice_dt 오늘 이후)
+  if (opts?.cat) q = q.eq("biz_category", opts.cat);
+  if (opts?.today) q = q.gte("notice_dt", `${todayStr}T00:00:00`);
 
   if (filters.org) q = q.ilike("order_org", `%${filters.org}%`);
   if (filters.contractMethod)

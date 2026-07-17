@@ -212,6 +212,55 @@ create table if not exists collect_cursor (
   updated_at timestamptz default now()
 );
 
+-- 수집 실행 로그 — 자동(cron)·수동 수집 1회당 1행(상태·건수·검증단계·오류). S-10 수집 모니터.
+-- (상세/apply 파일: supabase/collect_runs.sql)
+create table if not exists collect_runs (
+  id           bigserial primary key,
+  source       text not null default 'nara',
+  trigger      text not null default 'cron' check (trigger in ('cron','manual')),
+  status       text not null default 'running' check (status in ('running','success','partial','failed')),
+  started_at   timestamptz not null default now(),
+  finished_at  timestamptz,
+  duration_ms  integer,
+  window_bgn   text,
+  window_end   text,
+  pages        integer not null default 0,
+  scanned      integer not null default 0,
+  bids_upserted    integer not null default 0,
+  prices_upserted  integer not null default 0,
+  changes_appended integer not null default 0,
+  cursor_advanced  boolean not null default false,
+  error_count  integer not null default 0,
+  errors       jsonb not null default '[]'::jsonb,
+  checks       jsonb not null default '{}'::jsonb,
+  triggered_by uuid,
+  created_at   timestamptz not null default now()
+);
+create index if not exists idx_collect_runs_started on collect_runs(started_at desc);
+-- 수집 시 AI 분류 통계(기능상세정의서 v1.1 · 상세 apply: supabase/classify.sql)
+alter table collect_runs add column if not exists classify jsonb not null default '{}'::jsonb;
+
+-- 수집 시 AI 사업분류 게이트 — bids 분류 컬럼 + 결정 캐시 (supabase/classify.sql)
+alter table bids add column if not exists biz_category text check (biz_category in ('감리','컨설팅'));
+alter table bids add column if not exists classify jsonb;
+create index if not exists idx_bids_bizcat on bids(biz_category);
+
+create table if not exists bid_classifications (
+  bid_no      text not null,
+  bid_seq     text not null default '00',
+  category    text not null check (category in ('감리','컨설팅','해당없음','보류','오류')),
+  confidence  numeric(4,3),
+  reason      text,
+  method      text not null default 'llm' check (method in ('llm','rule','manual')),
+  model       text,
+  title       text,
+  order_org   text,
+  prefilter_base int,
+  decided_at  timestamptz not null default now(),
+  primary key (bid_no, bid_seq)
+);
+create index if not exists idx_bidcls_category on bid_classifications(category);
+
 -- 스코어링 룰 (FR-05)
 create table if not exists rules (
   id       bigserial primary key,
@@ -323,6 +372,8 @@ alter table bid_changes     enable row level security;   -- FIX 5d
 alter table bid_attachments enable row level security;   -- FIX 5d
 alter table daily_brief     enable row level security;   -- FIX 5d(동반)
 alter table collect_cursor  enable row level security;   -- FIX 5d(동반)
+alter table collect_runs    enable row level security;   -- 수집 모니터(active read-only)
+alter table bid_classifications enable row level security; -- 분류 결정 캐시(active read-only)
 
 -- bids: active 사용자면 read (6.1 — exec/strategy/pm/admin 모두 R)
 create policy bids_read on bids for select
@@ -401,4 +452,12 @@ create policy bid_changes_read on bid_changes for select
 create policy bid_attachments_read on bid_attachments for select
   using (app_current_role() is not null);
 create policy daily_brief_read on daily_brief for select
+  using (app_current_role() is not null);
+
+-- collect_runs: 수집 실행 로그 read-only(active). write는 service key 전용(정책 없음).
+create policy collect_runs_read on collect_runs for select
+  using (app_current_role() is not null);
+
+-- bid_classifications: 분류 결정 캐시 read-only(active). write는 service key 전용.
+create policy bidcls_read on bid_classifications for select
   using (app_current_role() is not null);

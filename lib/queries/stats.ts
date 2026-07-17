@@ -6,6 +6,7 @@ export interface DashboardData {
   bids: DashBid[];
   clients: DashClient[];
   watch: DashWatch[];
+  groups: DashGroup[]; // keyword_groups (감리/컨설팅 분류용)
   brief: { brief_date: string; summary: string | null; top_bids: unknown } | null;
   lastCollect: string | null;
   totalBids: number;
@@ -30,6 +31,8 @@ export interface DashBid {
   has_summary: boolean;
   tags: string[] | null;
   rescored_at: string | null;
+  biz_category: "감리" | "컨설팅" | null; // 수집 시 AI 분류(권위값). null이면 프론트 키워드 분류 폴백
+  needs_review: boolean;
 }
 export interface DashClient {
   name: string;
@@ -37,9 +40,16 @@ export interface DashClient {
   category: string;
 }
 export interface DashWatch {
+  bid_no: string;
+  bid_seq: string;
   analysis_status: string;
   proposal_status: string;
   decision: string;
+}
+export interface DashGroup {
+  name: string;
+  keywords: string[];
+  exclude: string[] | null;
 }
 
 export async function fetchDashboardData(
@@ -54,6 +64,7 @@ export async function fetchDashboardData(
     bidsRes,
     clientsRes,
     watchRes,
+    groupsRes,
     briefRes,
     cursorRes,
     totalRes,
@@ -65,13 +76,14 @@ export async function fetchDashboardData(
     supabase
       .from("bids")
       .select(
-        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,est_price,score,ai_score,ai_summary,tags,ai_flags"
+        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,est_price,score,ai_score,ai_summary,tags,ai_flags,biz_category,classify"
       )
       .is("archived_at", null)
       .or(notClosed) // 마감된 사업 제외
       .limit(5000),
     supabase.from("clients").select("name,aliases,category").eq("is_priority", true).eq("status", "active"),
-    supabase.from("watchlist").select("analysis_status,proposal_status,decision"),
+    supabase.from("watchlist").select("bid_no,bid_seq,analysis_status,proposal_status,decision"),
+    supabase.from("keyword_groups").select("name,keywords,exclude"),
     supabase.from("daily_brief").select("brief_date,summary,top_bids").order("brief_date", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("collect_cursor").select("last_reg_dt").order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("bids").select("bid_no", head).is("archived_at", null).or(notClosed), // 노출=미아카이브+마감전
@@ -102,12 +114,15 @@ export async function fetchDashboardData(
     has_summary: !!b.ai_summary,
     tags: (b.tags as string[]) ?? null,
     rescored_at: ((b.ai_flags as Record<string, unknown> | null)?.rescored_at as string) ?? null,
+    biz_category: (b.biz_category as "감리" | "컨설팅" | null) ?? null,
+    needs_review: !!(b.classify as Record<string, unknown> | null)?.needs_review,
   }));
 
   return {
     bids,
     clients: (clientsRes.data as DashClient[]) ?? [],
     watch: (watchRes.data as DashWatch[]) ?? [],
+    groups: (groupsRes.data as DashGroup[]) ?? [],
     brief: (briefRes.data as DashboardData["brief"]) ?? null,
     lastCollect: (cursorRes.data as { last_reg_dt: string } | null)?.last_reg_dt ?? null,
     totalBids: totalRes.count ?? 0,

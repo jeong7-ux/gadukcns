@@ -55,6 +55,8 @@ export interface Bid {
   ai_flags: AiFlags | null;
   raw: Record<string, unknown> | null;
   updated_at: string;
+  /** 수집 시 AI 사업분류(감리/컨설팅). null이면 미분류 */
+  biz_category?: "감리" | "컨설팅" | null;
   /** 목록 표시용 파생값 — bid_attachments 개수(fetchBids에서 채움) */
   attachment_count?: number;
   /** 목록 표시용 파생값 — 발주/수요기관이 우선 고객사와 매칭되면 채움(FR-18) */
