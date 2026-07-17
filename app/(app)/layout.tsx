@@ -3,8 +3,8 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "@/lib/auth/SessionProvider";
-import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
+import { AdminQuickMenu } from "@/components/layout/AdminQuickMenu";
 
 /**
  * 인증 셸. 게이팅 순서:
@@ -41,11 +41,11 @@ export default function AppLayout({
 
   return (
     <div className="flex min-h-screen bg-bg">
-      <Sidebar role={role} />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar />
         <main className="min-w-0 flex-1 p-4 md:p-6">{children}</main>
       </div>
+      <AdminQuickMenu role={role} />
     </div>
   );
 }

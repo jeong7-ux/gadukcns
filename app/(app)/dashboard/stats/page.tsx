@@ -1,7 +1,11 @@
 "use client";
 
-// S-10 통계 대시보드 v3 — FR-11. 3축(마감순위·고객사·주력점수 4~9)으로 재구성.
-// 설계 원천: docs/기능상세정의서_통계대시보드_v3.md · docs/UIUX설계서_통계대시보드_v3.md
+// S-10 통계 대시보드 — FR-11. "나라장터 입찰공고 실시간 모니터링" 3열 구성.
+// 설계 원천: 화면 캡처 2026-07-15 231022.png (다크 모니터링 대시보드 구성)
+//   좌: 오늘의 주요 공고 요약(2×2 KPI) + 입찰 진행 현황(도넛)
+//   중앙: 최신 입찰 공고 실시간 피드(테이블) + 최신 입찰 공고 추이(라인)
+//   우: 지역별 입찰 공고 분포(히트바)
+// 데이터 적응: 유찰/낙찰은 미수집 → 주력·고객사로 대체. 지도는 지역 히트바로 대체.
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
@@ -13,55 +17,23 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import {
-  fetchDashboardData,
-  type DashBid,
-  type DashboardData,
-} from "@/lib/queries/stats";
+import { useSession } from "@/lib/auth/SessionProvider";
+import { has, CAN_WATCH_WRITE } from "@/lib/auth/roles";
+import { fetchDashboardData, type DashBid, type DashboardData } from "@/lib/queries/stats";
 import { useRealtimeInvalidate } from "@/lib/hooks/useRealtimeInvalidate";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader } from "@/components/ui/Card";
-import { Pill } from "@/components/ui/Pill";
-import { fmtDate } from "@/lib/utils/format";
-import {
-  ddayInfo,
-  ddayBucket,
-  DDAY_PILL_CLASS,
-  type DdayBucket,
-} from "@/lib/design/dday";
+import { CollectButton } from "@/components/dashboard/CollectButton";
+import { ddayInfo, type DdayBucket } from "@/lib/design/dday";
+import { InfoCells, InfoHeaders } from "@/components/bids/InfoRowCells";
 
 const DAY = 86400000;
 const norm = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
-
-// 고객사 카테고리(clients.category) → 칩 축약 라벨.
-const CAT_LABEL: Record<string, string> = {
-  중앙정부부처: "중앙부처",
-  지방자치단체: "지자체",
-  공공기관: "공공",
-  의료기관: "의료",
-  교육기관: "교육",
-  금융기관: "금융",
-  기타: "기타",
-};
-
-// D-day 구간 → 솔리드 막대색(캘린더 미니). Tailwind JIT가 리터럴 클래스를 잡도록 정적 맵.
-const DDAY_BAR: Record<DdayBucket, string> = {
-  urgent: "bg-dday-urgent",
-  soon: "bg-dday-soon",
-  near: "bg-dday-near",
-  far: "bg-dday-far",
-  past: "bg-dday-far",
-};
-
-// 추정가 축약(억/만).
-const eok = (v: number | null | undefined): string => {
-  if (v == null || v <= 0) return "";
-  if (v >= 1e8) return `${(v / 1e8).toFixed(1)}억`;
-  if (v >= 1e4) return `${Math.round(v / 1e4).toLocaleString()}만`;
-  return `${v}`;
-};
 
 function color(name: string, fb: string) {
   if (typeof window === "undefined") return fb;
@@ -71,368 +43,183 @@ function color(name: string, fb: string) {
 // ── 행 데이터 타입 ────────────────────────────────────────────
 type Row = DashBid & {
   clientName: string | null;
-  clientCat: string | null;
+  demandClient: string | null; // 수요기관이 고객사면 그 고객사명(⭐·깜빡임 표시용)
   dd: number | null;
   ddLabel: string;
   ddBucket: DdayBucket;
+  cat: "감리" | "컨설팅";
 };
+
+type FeedTab = "전체" | "감리" | "컨설팅";
 
 export default function StatsPage() {
   const supabase = getSupabaseClient();
+  const { role } = useSession();
+  const canWatch = has(role, CAN_WATCH_WRITE);
   useRealtimeInvalidate("bids", ["dashboard"]);
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: () => fetchDashboardData(supabase),
   });
 
+  const [q, setQ] = useState("");
   const m = useMemo(() => (data ? compute(data) : null), [data]);
 
   if (isLoading || !m) return <DashboardSkeleton />;
 
+  const query = norm(q);
+  const feed = query
+    ? m.feed.filter((b) =>
+        norm(`${b.title ?? ""} ${b.order_org ?? ""} ${b.demand_org ?? ""} ${b.bid_no}`).includes(query)
+      )
+    : m.feed;
+
   return (
     <div>
       <PageHeader
-        title="통계 대시보드"
+        title="나라장터 입찰공고 실시간 모니터링"
         screen="S-10"
-        desc="마감순위 · 고객사 · 주력점수(4~9) 3축으로 오늘 잡을 공고를 짚습니다. (미아카이브 · 마감전 · 주력점수 base−exclude 기준)"
-        action={
-          <div className="flex items-center gap-3 text-xs text-subtle">
-            <span>마지막 수집 {m.lastCollect ? fmtDate(m.lastCollect) : "-"}</span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-2 w-2 rounded-full bg-success" aria-hidden /> 실시간
-            </span>
-            <button
-              onClick={() => refetch()}
-              disabled={isFetching}
-              className="rounded px-2 py-1 ring-1 ring-border hover:bg-bg disabled:opacity-50"
-            >
-              새로고침
-            </button>
-          </div>
-        }
+        desc="오늘의 주요 사업(감리, 컨설팅) 공고 요약 · 실시간 피드를 한눈에 모니터링합니다."
+        action={<CollectButton fallbackTime={m.lastCollect} />}
       />
 
-      {/* A. KPI 밴드 (6타일) */}
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        <Kpi label="주력 공고 (≥4)" value={m.kpi.core} tone="text-primary" href="/dashboard" />
-        <Kpi label="우량 (5~9)" value={m.kpi.good} tone="text-primary" href="/dashboard" />
-        <Kpi label="고객사 공고" value={m.kpi.client} tone="text-accent" href="/dashboard" />
-        <Kpi label="임박 D0~3" value={m.kpi.imminent} tone="text-dday-urgent" href="/dashboard" />
-        <Kpi label="총 추정가(억)" value={m.kpi.eok} tone="text-text" decimal />
-        <Kpi
-          label="AI 커버리지"
-          value={m.kpi.aiCov}
-          suffix="%"
-          tone={m.kpi.aiCov >= 70 ? "text-success" : "text-subtle"}
+      {/* 검색 바 */}
+      <div className="mb-4">
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="공고명 · 발주기관 · 공고번호 검색"
+          className="w-full rounded-lg bg-surface px-3 py-2 text-sm text-text ring-1 ring-border placeholder:text-subtle focus:outline-none focus:ring-2 focus:ring-primary"
         />
       </div>
 
-      {/* 메인 2열: B 마감순위(3) · C 고객사(2) */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[3fr_2fr]">
-        <ActionBoard m={m} />
-        <ClientTrack m={m} />
+      {/* 상단: 좌(요약·도넛, 고정폭) · 피드(나머지 최대폭) */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[520px_minmax(0,1fr)]">
+        {/* ── 좌 컬럼 ── */}
+        <div className="space-y-4">
+          <SummaryKpis m={m} canWatch={canWatch} />
+          <ProgressDonut m={m} />
+        </div>
+
+        {/* ── 피드 (최대폭) ── */}
+        <div className="space-y-4">
+          <FeedTable rows={feed} />
+        </div>
       </div>
 
-      {/* 서브 2열: D 스코어링 · E 캘린더 */}
+      {/* 하단: 분류별 추이 (감리 / 컨설팅) */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <ScoringPanel m={m} />
-        <MiniCalendar m={m} />
+        <TrendChart title="최근 감리 입찰 공고 추이" data={m.trendGamri} colorVar="--color-primary" fb="#1F497D" />
+        <TrendChart title="최근 컨설팅 입찰 공고 추이" data={m.trendConsult} colorVar="--color-accent" fb="#2563EB" />
       </div>
-
-      {/* F. 보조 (접이식) */}
-      <SecondaryPanel m={m} />
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════
-// B. 마감순위 액션 보드
+// 좌. 오늘의 주요 공고 요약 (2×2 KPI)
 // ═══════════════════════════════════════════════════════════════
-function ActionBoard({ m }: { m: Metrics }) {
-  const [open, setOpen] = useState<Record<string, boolean>>({});
+// KPI 클릭 → S-04 입찰 목록으로 이동(해당 조건 쿼리 파라미터 전달).
+function SummaryKpis({ m, canWatch }: { m: Metrics; canWatch: boolean }) {
   return (
     <Card>
       <CardHeader
-        title="마감순위 액션 보드"
-        action={<span className="text-xs text-subtle">주력 {m.kpi.core}건 · 마감 임박순</span>}
-      />
-      <div className="p-4">
-        {m.board.length === 0 ? (
-          <p className="text-sm text-subtle">마감전 주력 공고가 없습니다.</p>
-        ) : (
-          m.board.map((g) => {
-            const isOpen = open[g.key] ?? g.defaultOpen;
-            return (
-              <div key={g.key} className="mb-1.5 last:mb-0">
-                <button
-                  onClick={() => setOpen((s) => ({ ...s, [g.key]: !isOpen }))}
-                  aria-expanded={isOpen}
-                  className="flex w-full items-center gap-1.5 py-1 text-left"
-                >
-                  <span className="text-subtle">{isOpen ? "▾" : "▸"}</span>
-                  <span className="text-xs font-semibold uppercase text-subtle">{g.label}</span>
-                  <span className="text-xs text-subtle">· {g.rows.length}건</span>
-                </button>
-                {isOpen && (
-                  <div className="mb-1">
-                    {g.rows.slice(0, 20).map((b) => (
-                      <BoardRow key={`${b.bid_no}-${b.bid_seq}`} b={b} showPrice />
-                    ))}
-                    {g.rows.length > 20 && (
-                      <Link
-                        href="/dashboard"
-                        className="mt-0.5 block px-1 text-[11px] text-accent hover:underline"
-                      >
-                        외 {g.rows.length - 20}건 전체 보기 →
-                      </Link>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        )}
-        {/* 하단 배지 줄 */}
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-border pt-3 text-xs">
-          <Pill tone="danger">오늘 마감 {m.todayClose}</Pill>
-          <Link href="/watchlist">
-            <Pill tone="accent">관심 {m.watchCount}</Pill>
-          </Link>
-          <Pill tone="muted">마감 미정 {m.undated}</Pill>
-        </div>
-      </div>
-    </Card>
-  );
-}
-
-// 행 템플릿(R4): [D-day pill] (발주기관) 사업명 ⭐ [주N] 추정가
-function BoardRow({ b, showPrice }: { b: Row; showPrice?: boolean }) {
-  return (
-    <Link
-      href={`/bids/${encodeURIComponent(b.bid_no)}`}
-      className="flex h-9 items-center gap-2 rounded px-1 hover:bg-bg"
-    >
-      {b.dd === null ? (
-        <span
-          className={`inline-flex h-5 w-12 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${DDAY_PILL_CLASS.far}`}
-        >
-          미정
-        </span>
-      ) : (
-        <span
-          className={`inline-flex h-5 w-12 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${DDAY_PILL_CLASS[b.ddBucket]}`}
-        >
-          {b.ddLabel}
-        </span>
-      )}
-      <span className="hidden max-w-[120px] shrink-0 truncate text-xs text-subtle sm:inline">
-        ({b.order_org ?? "발주기관 미상"})
-      </span>
-      <span className="min-w-0 flex-1 truncate text-sm text-text">{b.title ?? "제목 없음"}</span>
-      {b.clientName && (
-        <span aria-label="고객사 공고" className="shrink-0 text-accent">
-          ⭐
-        </span>
-      )}
-      <span className="shrink-0 rounded bg-primary/10 px-1.5 text-[11px] font-semibold text-primary">
-        주{b.coreScore}
-      </span>
-      {showPrice && (
-        <span className="hidden w-14 shrink-0 text-right text-[11px] text-subtle md:inline">
-          {eok(b.est_price)}
-        </span>
-      )}
-    </Link>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// C. 고객사 트랙
-// ═══════════════════════════════════════════════════════════════
-function ClientTrack({ m }: { m: Metrics }) {
-  return (
-    <Card>
-      <CardHeader
-        title="고객사 트랙"
-        action={<span className="text-xs text-subtle">{m.kpi.client}건 · 점수 무관</span>}
-      />
-      <div className="p-4">
-        {/* 카테고리 칩 스트립 */}
-        {m.clientChips.length > 0 && (
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {m.clientChips.map((c) => (
-              <Link
-                key={c.cat}
-                href="/dashboard"
-                className="rounded-full bg-bg px-2.5 py-1 text-xs text-text ring-1 ring-border hover:ring-accent"
-              >
-                {c.label} <span className="font-semibold text-accent">{c.n}</span>
-              </Link>
-            ))}
-          </div>
-        )}
-        {/* 고객사 그룹핑 리스트 (마감순, 최대 10행) */}
-        {m.clientGroups.length === 0 ? (
-          <p className="text-sm text-subtle">고객사 매칭 공고가 없습니다.</p>
-        ) : (
-          <div className="space-y-2">
-            {m.clientGroups.map((g) => (
-              <div key={g.name}>
-                <div className="flex items-center gap-1.5 py-0.5">
-                  <span className="truncate text-sm font-medium text-accent">{g.name}</span>
-                  {g.rows.length > 1 && (
-                    <span className="text-xs text-subtle">×{g.rows.length}</span>
-                  )}
-                </div>
-                {g.rows.map((b) => (
-                  <Link
-                    key={`${b.bid_no}-${b.bid_seq}`}
-                    href={`/bids/${encodeURIComponent(b.bid_no)}`}
-                    className="flex h-9 items-center gap-2 rounded pl-3 pr-1 hover:bg-bg"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-sm text-text">
-                      {b.title ?? "제목 없음"}
-                    </span>
-                    {b.coreScore >= 4 && (
-                      <span className="shrink-0 rounded bg-primary/10 px-1.5 text-[11px] font-semibold text-primary">
-                        주{b.coreScore}
-                      </span>
-                    )}
-                    {b.dd === null ? (
-                      <span
-                        className={`inline-flex h-5 w-12 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${DDAY_PILL_CLASS.far}`}
-                      >
-                        미정
-                      </span>
-                    ) : (
-                      <span
-                        className={`inline-flex h-5 w-12 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${DDAY_PILL_CLASS[b.ddBucket]}`}
-                      >
-                        {b.ddLabel}
-                      </span>
-                    )}
-                  </Link>
-                ))}
-              </div>
-            ))}
-            {m.clientMore > 0 && (
-              <Link href="/dashboard" className="block text-xs text-accent hover:underline">
-                전체 보기 → (외 {m.clientMore}건)
-              </Link>
-            )}
-          </div>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════
-// D. 스코어링 현황 (2밴드 + 우량 Top 8 + AI 게이지)
-// ═══════════════════════════════════════════════════════════════
-function ScoringPanel({ m }: { m: Metrics }) {
-  const { band4, band59, band10, coreTotal } = m.score;
-  const pct = (n: number) => (coreTotal ? `${(n / coreTotal) * 100}%` : "0%");
-  return (
-    <Card>
-      <CardHeader title="스코어링 현황 (주력점수)" />
-      <div className="p-4">
-        {/* 2밴드 스택바 */}
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-subtle">
-            관심(4) <b className="text-text">{band4}</b>
-          </span>
-          <span className="text-subtle">
-            <b className="text-text">{band59}</b> 우량(5~9)
-            {band10 > 0 && (
-              <>
-                {" · "}
-                <b className="text-text">{band10}</b> 10+
-              </>
-            )}
-          </span>
-        </div>
-        <div className="mt-1 flex h-5 w-full overflow-hidden rounded ring-1 ring-border">
-          <div className="bg-primary/40" style={{ width: pct(band4) }} />
-          <div className="bg-primary" style={{ width: pct(band59) }} />
-          {band10 > 0 && <div className="bg-accent" style={{ width: pct(band10) }} />}
-        </div>
-
-        {/* 우량 Top 8 */}
-        <p className="mb-1 mt-4 text-xs font-semibold text-subtle">우량 Top 8</p>
-        {m.goodTop.length === 0 ? (
-          <p className="text-sm text-subtle">해당 공고가 없습니다.</p>
-        ) : (
-          <div>
-            {m.goodTop.map((b) => (
-              <BoardRow key={`${b.bid_no}-${b.bid_seq}`} b={b} />
-            ))}
-          </div>
-        )}
-
-        {/* AI 커버리지 게이지 */}
-        <div className="mt-4">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-subtle">AI 요약 커버리지</span>
-            <span className={m.kpi.aiCov >= 70 ? "font-semibold text-success" : "font-semibold text-subtle"}>
-              {m.kpi.aiCov}%
-            </span>
-          </div>
-          <div className="mt-1 h-2 w-full overflow-hidden rounded bg-bg ring-1 ring-border">
-            <div
-              className={m.kpi.aiCov >= 70 ? "h-full bg-success" : "h-full bg-primary/50"}
-              style={{ width: `${m.kpi.aiCov}%` }}
-            />
-          </div>
-          {m.kpi.unsummarized > 0 && (
+        title="입찰 공고 요약"
+        action={
+          canWatch && (
             <Link
-              href="/dashboard"
-              className="mt-2 inline-block rounded px-2 py-0.5 text-xs text-subtle ring-1 ring-border hover:bg-bg"
+              href="/watchlist"
+              title="관심 목록으로 이동"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-dday-soon px-4 py-2 text-base font-bold text-white shadow-card transition hover:opacity-90"
             >
-              미요약 {m.kpi.unsummarized}건
+              <span className="text-lg">⭐</span> 관심 등록 {m.kpi.watch}
             </Link>
-          )}
-        </div>
+          )
+        }
+      />
+      <div className="grid grid-cols-2 gap-4 p-5">
+        <KpiTile label="당일신규" value={m.kpi.todayNew} tone="text-success" href="/dashboard?new=today" />
+        <KpiTile label="감리" value={m.kpi.gamri} tone="text-primary" href="/dashboard?cat=감리" />
+        <KpiTile label="컨설팅" value={m.kpi.consult} tone="text-accent" href="/dashboard?cat=컨설팅" />
+        <KpiTile label="전체공고" value={m.kpi.total} tone="text-text" href="/dashboard?view=all" />
       </div>
     </Card>
   );
 }
 
+function KpiTile({ label, value, tone, href }: { label: string; value: number; tone: string; href?: string }) {
+  const body = (
+    <div className="rounded-card bg-bg p-6 ring-1 ring-border">
+      <p className="truncate text-sm text-subtle">{label}</p>
+      <p className={`mt-3 text-5xl font-bold leading-none ${tone}`}>{value.toLocaleString()}</p>
+    </div>
+  );
+  return href ? (
+    <Link href={href} className="block transition-transform hover:-translate-y-0.5">
+      {body}
+    </Link>
+  ) : (
+    body
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
-// E. 마감 캘린더 미니 (14일)
+// 좌. 입찰 진행 현황 (도넛 — 마감 임박도 분포)
 // ═══════════════════════════════════════════════════════════════
-function MiniCalendar({ m }: { m: Metrics }) {
-  const maxC = Math.max(1, ...m.cal.map((x) => x.count));
+function ProgressDonut({ m }: { m: Metrics }) {
+  const colors = m.donut.map((d) => color(d.colorVar, d.fb));
+  const total = m.donut.reduce((s, d) => s + d.value, 0);
   return (
     <Card>
-      <CardHeader title="마감 캘린더 (14일)" />
+      <CardHeader title="입찰 마감 현황" action={<span className="text-xs text-subtle">노출 {total}건</span>} />
       <div className="p-4">
-        {m.calTotal === 0 ? (
-          <p className="text-sm text-subtle">14일 내 마감 없음 · 미정 {m.undated}건</p>
+        {total === 0 ? (
+          <p className="py-10 text-center text-sm text-subtle">데이터 없음</p>
         ) : (
-          <>
-            <div className="flex h-16 items-end gap-1">
-              {m.cal.map((x) => (
-                <div key={x.i} className="flex flex-1 flex-col items-center justify-end">
-                  <div
-                    className={`w-full rounded-t ${x.count > 0 ? DDAY_BAR[x.bucket] : "bg-border"} ${x.i === 0 ? "ring-1 ring-inset ring-text/30" : ""}`}
-                    style={{ height: x.count > 0 ? `${Math.max((x.count / maxC) * 100, 12)}%` : "2px" }}
-                    title={`${x.label} · ${x.count}건`}
+          <div className="flex items-center gap-6">
+            <div className="relative h-60 w-60 shrink-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={m.donut}
+                    dataKey="value"
+                    nameKey="label"
+                    innerRadius={76}
+                    outerRadius={112}
+                    paddingAngle={2}
+                    isAnimationActive={false}
+                    stroke="none"
+                  >
+                    {m.donut.map((_, i) => (
+                      <Cell key={i} fill={colors[i]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      background: "var(--color-surface)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      color: "var(--color-text)",
+                      fontSize: 12,
+                    }}
                   />
-                </div>
-              ))}
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                <span className="text-5xl font-bold text-text">{total}</span>
+                <span className="text-sm text-subtle">건</span>
+              </div>
             </div>
-            <div className="mt-1 flex text-[10px] text-subtle">
-              {m.cal.map((x) => (
-                <span key={x.i} className="flex-1 text-center">
-                  {x.i === 0 || x.i === 4 || x.i === 8 || x.i === 13 ? x.label : ""}
-                </span>
+            <ul className="min-w-0 flex-1 space-y-3">
+              {m.donut.map((d, i) => (
+                <li key={d.key} className="flex items-center gap-2.5 text-[15px]">
+                  <span className="h-3 w-3 shrink-0 rounded-sm" style={{ background: colors[i] }} />
+                  <span className="min-w-0 flex-1 truncate text-subtle">{d.label}</span>
+                  <span className="font-semibold text-text">{d.value}</span>
+                </li>
               ))}
-            </div>
-            <p className="mt-2 text-[11px] text-subtle">
-              막대색 = 마감 임박도(3구간) · 미정 {m.undated}건은 제외
-            </p>
-          </>
+            </ul>
+          </div>
         )}
       </div>
     </Card>
@@ -440,107 +227,132 @@ function MiniCalendar({ m }: { m: Metrics }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// F. 보조 영역 (접이식): 유입 추세 · 발주기관 Top 5 · AI 브리핑 · 데이터 상태
+// 중앙. 최신 입찰 공고 실시간 피드 (테이블)
 // ═══════════════════════════════════════════════════════════════
-function SecondaryPanel({ m }: { m: Metrics }) {
-  const cSubtle = color("--color-text-subtle", "#64748b");
-  const cAccent = color("--color-accent", "#2563EB");
-  const cBorder = color("--color-border", "#e2e8f0");
-  const tt = {
-    contentStyle: {
-      background: "var(--color-surface)",
-      border: "1px solid var(--color-border)",
-      borderRadius: 8,
-      color: "var(--color-text)",
-      fontSize: 12,
-      boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
-    },
-    labelStyle: { color: "var(--color-text)", fontWeight: 600 },
-    itemStyle: { color: "var(--color-text)" },
-    cursor: { fill: cBorder, fillOpacity: 0.25, stroke: cBorder },
+function FeedTable({ rows }: { rows: Row[] }) {
+  const [tab, setTab] = useState<FeedTab>("전체");
+  const counts = {
+    전체: rows.length,
+    감리: rows.filter((b) => b.cat === "감리").length,
+    컨설팅: rows.filter((b) => b.cat === "컨설팅").length,
   };
-  const maxOrg = Math.max(1, ...m.byOrg.map((o) => o.count));
-
+  const filtered = tab === "전체" ? rows : rows.filter((b) => b.cat === tab);
+  const view = filtered.slice(0, 11);
+  // "전체 목록 보기" → S-04를 현재 탭 조건으로 조회
+  const listHref = tab === "전체" ? "/dashboard?view=all" : `/dashboard?cat=${tab}`;
   return (
-    <details open className="mt-4">
-      <summary className="cursor-pointer select-none py-2 text-sm font-semibold text-subtle">
-        보조 통계 (유입 추세 · 발주기관 · AI 브리핑 · 데이터 상태)
-      </summary>
-      <div className="mt-2 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* 유입 추세 21일 */}
-        <Card>
-          <CardHeader title="유입 추세 (주력 · 21일)" />
-          <div className="h-52 p-4">
-            <ResponsiveContainer width="100%" height={180}>
-              <LineChart data={m.newByDay}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
-                <XAxis dataKey="date" tick={{ fontSize: 10, fill: cSubtle }} interval={4} />
-                <YAxis tick={{ fontSize: 11, fill: cSubtle }} allowDecimals={false} width={24} />
-                <Tooltip {...tt} />
-                <Line
-                  isAnimationActive={false}
-                  type="monotone"
-                  dataKey="count"
-                  stroke={cAccent}
-                  strokeWidth={2}
-                  dot={{ r: 2 }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-
-        {/* 발주기관 Top 5 (div 가로바) */}
-        <Card>
-          <CardHeader title="발주기관 Top 5 (주력)" />
-          <div className="space-y-2 p-4">
-            {m.byOrg.length === 0 ? (
-              <p className="text-sm text-subtle">데이터 없음</p>
+    <Card>
+      <CardHeader title="입찰 정보 목록" action={<span className="text-xs text-subtle">수집일 최신순</span>} />
+      {/* 탭: 전체 / 감리 / 컨설팅 */}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border px-3 py-2">
+        {(["전체", "감리", "컨설팅"] as const).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`rounded-full px-3 py-1 text-xs font-medium ring-1 transition ${
+              tab === t ? "bg-primary text-white ring-primary" : "bg-bg text-subtle ring-border hover:text-text"
+            }`}
+          >
+            {t} <span className="opacity-70">{counts[t]}</span>
+          </button>
+        ))}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-left text-xs">
+          <thead className="border-b border-border text-subtle">
+            <tr>
+              <InfoHeaders />
+            </tr>
+          </thead>
+          <tbody>
+            {view.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-3 py-8 text-center text-subtle">
+                  {tab === "전체" ? "표시할 공고가 없습니다." : `${tab} 공고가 없습니다.`}
+                </td>
+              </tr>
             ) : (
-              m.byOrg.map((o) => (
-                <div key={o.name} className="flex items-center gap-2 text-xs">
-                  <span className="w-28 shrink-0 truncate text-subtle" title={o.name}>
-                    {o.name}
-                  </span>
-                  <div className="h-3 flex-1 overflow-hidden rounded bg-bg ring-1 ring-border">
-                    <div
-                      className="h-full rounded bg-primary"
-                      style={{ width: `${(o.count / maxOrg) * 100}%` }}
-                    />
-                  </div>
-                  <span className="w-5 shrink-0 text-right font-medium text-text">{o.count}</span>
-                </div>
+              view.map((b) => (
+                <tr
+                  key={`${b.bid_no}-${b.bid_seq}`}
+                  className={`border-b border-border/60 hover:bg-bg ${b.clientName ? "bg-success/5" : ""}`}
+                >
+                  <InfoCells
+                    bidNo={b.bid_no}
+                    title={b.title}
+                    orderOrg={b.order_org}
+                    demandOrg={b.demand_org}
+                    noticeDt={b.notice_dt}
+                    deadlineDt={b.deadline_dt}
+                    estPrice={b.est_price}
+                    needsReview={b.needs_review}
+                    demandClient={b.demandClient}
+                  />
+                </tr>
               ))
             )}
-          </div>
-        </Card>
-
-        {/* AI 데일리 브리핑 */}
-        <Card>
-          <CardHeader title={`AI 데일리 브리핑 ${m.brief?.date ? `(${m.brief.date})` : ""}`} />
-          <div className="p-4 text-sm text-text">
-            {m.brief?.summary ? (
-              <p className="whitespace-pre-wrap leading-relaxed">{m.brief.summary}</p>
-            ) : (
-              <p className="text-subtle">브리핑이 아직 생성되지 않았습니다.</p>
-            )}
-          </div>
-        </Card>
-
-        {/* 데이터 상태 */}
-        <Card>
-          <CardHeader title="데이터 · 파이프라인 상태" />
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2 p-4 text-sm">
-            <Meta label="마지막 수집" value={m.lastCollect ? fmtDate(m.lastCollect) : "-"} />
-            <Meta label="마지막 재스코어링" value={m.lastRescore ? fmtDate(m.lastRescore) : "-"} />
-            <Meta label="노출 공고 / 아카이브" value={`${m.totalBids} / ${m.archivedBids}`} />
-            <Meta label="첨부 정규화 공고" value={`${m.attBidCount}`} />
-            <Meta label="활성 스코어링 룰" value={`${m.rulesActive}`} />
-            <Meta label="고객사" value={`${m.clientsCount}`} />
-          </div>
-        </Card>
+          </tbody>
+        </table>
       </div>
-    </details>
+      {filtered.length > 11 && (
+        <div className="border-t border-border p-2 text-center">
+          <Link href={listHref} className="text-xs text-accent hover:underline">
+            전체 목록 보기 → (외 {filtered.length - 11}건)
+          </Link>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 중앙. 최신 입찰 공고 추이 (라인차트 — 일별 신규 등록)
+// ═══════════════════════════════════════════════════════════════
+function TrendChart({
+  title,
+  data,
+  colorVar,
+  fb,
+}: {
+  title: string;
+  data: { date: string; count: number }[];
+  colorVar: string;
+  fb: string;
+}) {
+  const cSubtle = color("--color-text-subtle", "#64748b");
+  const cLine = color(colorVar, fb);
+  return (
+    <Card>
+      <CardHeader title={title} action={<span className="text-xs text-subtle">일별 신규 등록 · 21일</span>} />
+      <div className="h-56 p-4">
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fill: cSubtle }} interval={3} />
+            <YAxis tick={{ fontSize: 11, fill: cSubtle }} allowDecimals={false} width={24} />
+            <Tooltip
+              contentStyle={{
+                background: "var(--color-surface)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 8,
+                color: "var(--color-text)",
+                fontSize: 12,
+              }}
+              labelStyle={{ color: "var(--color-text)", fontWeight: 600 }}
+            />
+            <Line
+              isAnimationActive={false}
+              type="monotone"
+              dataKey="count"
+              name="신규 등록"
+              stroke={cLine}
+              strokeWidth={2}
+              dot={{ r: 2 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </Card>
   );
 }
 
@@ -550,165 +362,103 @@ function SecondaryPanel({ m }: { m: Metrics }) {
 type Metrics = ReturnType<typeof compute>;
 
 function compute(d: DashboardData) {
+  // 고객사 매칭
   const clients = d.clients.map((c) => ({
     name: c.name,
-    category: c.category,
     keys: [c.name, ...(c.aliases ?? [])].map(norm).filter(Boolean),
   }));
   const matchClient = (b: DashBid) => {
     const hay = norm(`${b.order_org ?? ""} ${b.demand_org ?? ""}`);
-    return clients.find((c) => c.keys.some((k) => hay.includes(k))) ?? null;
+    return clients.find((c) => c.keys.some((k) => hay.includes(k)))?.name ?? null;
+  };
+  // 단일 기관 문자열이 고객사인지 판정(수요기관 ⭐ 표시용)
+  const matchOrgClient = (org: string | null) => {
+    const hay = norm(org ?? "");
+    if (!hay) return null;
+    return clients.find((c) => c.keys.some((k) => hay.includes(k)))?.name ?? null;
+  };
+
+  // 분류(감리/컨설팅): keyword_groups title 매칭. 감리 그룹 우선.
+  const lc = (s: string | null | undefined) => (s ?? "").toLowerCase();
+  const gamriGroups = d.groups.filter((g) => g.name.includes("감리"));
+  const classify = (title: string | null): "감리" | "컨설팅" => {
+    const t = lc(title);
+    const isGamri = gamriGroups.some(
+      (g) =>
+        (g.keywords ?? []).some((k) => k && t.includes(lc(k))) &&
+        !(g.exclude ?? []).some((ex) => ex && t.includes(lc(ex)))
+    );
+    return isGamri ? "감리" : "컨설팅";
   };
 
   const rows: Row[] = d.bids.map((b) => {
-    const c = matchClient(b);
     const info = ddayInfo(b.deadline_dt);
     return {
       ...b,
-      clientName: c?.name ?? null,
-      clientCat: c?.category ?? null,
+      clientName: matchClient(b),
+      demandClient: matchOrgClient(b.demand_org),
       dd: info.days,
       ddLabel: info.label,
       ddBucket: info.bucket,
+      // 수집 시 AI 분류(biz_category)를 권위값으로. 없으면 키워드 분류 폴백.
+      cat: b.biz_category ?? classify(b.title),
     };
   });
 
-  // 모수: 주력(주력점수≥4) / 고객사(점수 무관)
-  const core = rows.filter((b) => b.coreScore >= 4);
-  const clientRows = rows.filter((b) => b.clientName);
-
-  // ── A. KPI ─────────────────────────────────
-  const totalEst = core.reduce((s, b) => s + (b.est_price ?? 0), 0);
+  // ── 오늘의 주요 공고 요약 (2×2): 당일신규 · 감리 · 컨설팅 · 전체공고 ──
+  const todayD = new Date();
+  const isToday = (b: Row) => (b.notice_dt ? sameDay(new Date(b.notice_dt), todayD) : false);
   const kpi = {
-    core: core.length,
-    good: core.filter((b) => b.coreScore >= 5 && b.coreScore <= 9).length,
-    client: clientRows.length,
-    imminent: core.filter((b) => b.dd !== null && b.dd >= 0 && b.dd <= 3).length,
-    eok: Math.round((totalEst / 1e8) * 10) / 10,
-    aiCov: core.length ? Math.round((core.filter((b) => b.has_summary).length / core.length) * 100) : 0,
-    unsummarized: core.filter((b) => !b.has_summary).length,
+    todayNew: rows.filter(isToday).length,
+    gamri: rows.filter((b) => b.cat === "감리").length,
+    consult: rows.filter((b) => b.cat === "컨설팅").length,
+    total: rows.length,
+    watch: d.watch.length, // 관심 등록(watchlist) 건수
   };
 
-  // ── B. 마감순위 보드 ────────────────────────
-  // 정렬: ① dd ASC(미정 뒤로) → ② 고객사 → ③ 주력점수 DESC
-  const boardSorted = [...core].sort((a, b) => {
-    const da = a.dd ?? 99999;
-    const db = b.dd ?? 99999;
-    if (da !== db) return da - db;
-    const ca = a.clientName ? 1 : 0;
-    const cb = b.clientName ? 1 : 0;
-    if (cb !== ca) return cb - ca;
-    return b.coreScore - a.coreScore;
+  // ── 입찰 진행 현황 (도넛 — 마감 임박도) ──
+  const donut = [
+    { key: "today", label: "오늘 마감", value: rows.filter((b) => b.dd === 0).length, colorVar: "--color-dday-urgent", fb: "#dc2626" },
+    { key: "soon", label: "임박 (1~3일)", value: rows.filter((b) => b.dd !== null && b.dd >= 1 && b.dd <= 3).length, colorVar: "--color-dday-soon", fb: "#f97316" },
+    { key: "week", label: "이번주 (4~7일)", value: rows.filter((b) => b.dd !== null && b.dd >= 4 && b.dd <= 7).length, colorVar: "--color-dday-near", fb: "#eab308" },
+    { key: "far", label: "여유 (8일+)", value: rows.filter((b) => b.dd !== null && b.dd >= 8).length, colorVar: "--color-success", fb: "#16a34a" },
+    { key: "none", label: "마감 미정", value: rows.filter((b) => b.dd === null).length, colorVar: "--color-text-subtle", fb: "#94a3b8" },
+  ].filter((x) => x.value > 0);
+
+  // ── 입찰 목록 (수집일=공고 등록일 기준 최신순). 탭(전체/감리/컨설팅)은 FeedTable에서 분기 ──
+  const feed = [...rows].sort((a, b) => {
+    const ta = a.notice_dt ? new Date(a.notice_dt).getTime() : 0;
+    const tb = b.notice_dt ? new Date(b.notice_dt).getTime() : 0;
+    return tb - ta; // 수집일 최신순
   });
-  const GROUP_DEFS: { key: string; label: string; test: (dd: number | null) => boolean; defaultOpen: boolean }[] = [
-    { key: "d03", label: "D0~3", test: (dd) => dd !== null && dd <= 3, defaultOpen: true },
-    { key: "d47", label: "D4~7", test: (dd) => dd !== null && dd >= 4 && dd <= 7, defaultOpen: true },
-    { key: "d814", label: "D8~14", test: (dd) => dd !== null && dd >= 8 && dd <= 14, defaultOpen: false },
-    { key: "d15", label: "D15+", test: (dd) => dd !== null && dd >= 15, defaultOpen: false },
-    { key: "none", label: "마감 미정", test: (dd) => dd === null, defaultOpen: false },
-  ];
-  const board = GROUP_DEFS.map((g) => ({ ...g, rows: boardSorted.filter((b) => g.test(b.dd)) })).filter(
-    (g) => g.rows.length > 0
-  );
-  const todayClose = core.filter((b) => b.dd === 0).length;
-  const undated = core.filter((b) => b.dd === null).length;
 
-  // ── C. 고객사 트랙 ──────────────────────────
-  const catCount = new Map<string, number>();
-  for (const b of clientRows) {
-    const cat = b.clientCat ?? "기타";
-    catCount.set(cat, (catCount.get(cat) ?? 0) + 1);
-  }
-  const clientChips = [...catCount.entries()]
-    .map(([cat, n]) => ({ cat, label: CAT_LABEL[cat] ?? cat, n }))
-    .sort((a, b) => b.n - a.n);
+  // ── 분류별 입찰 공고 추이 (일별 신규 등록, 21일) — 감리 / 컨설팅 ──
+  const days = lastNDays(21);
+  const trendFor = (cat: "감리" | "컨설팅") =>
+    days.map((d0) => ({
+      date: fmtMD(d0),
+      count: rows.filter((b) => b.cat === cat && b.notice_dt && sameDay(new Date(b.notice_dt), d0)).length,
+    }));
+  const trendGamri = trendFor("감리");
+  const trendConsult = trendFor("컨설팅");
 
-  const deadlineKey = (b: Row) => b.deadline_dt ?? "9999-12-31";
-  const groupMap = new Map<string, Row[]>();
-  for (const b of [...clientRows].sort((a, b) => deadlineKey(a).localeCompare(deadlineKey(b)))) {
-    const arr = groupMap.get(b.clientName!) ?? [];
-    arr.push(b);
-    groupMap.set(b.clientName!, arr);
-  }
-  const allClientGroups = [...groupMap.entries()]
-    .map(([name, gr]) => ({ name, rows: gr }))
-    .sort((a, b) => deadlineKey(a.rows[0]).localeCompare(deadlineKey(b.rows[0])));
-  // 최대 10행 노출(그룹 단위 누적)
-  const clientGroups: { name: string; rows: Row[] }[] = [];
-  let shown = 0;
-  for (const g of allClientGroups) {
-    if (shown >= 10) break;
-    const take = g.rows.slice(0, 10 - shown);
-    clientGroups.push({ name: g.name, rows: take });
-    shown += take.length;
-  }
-  const clientMore = clientRows.length - shown;
-
-  // ── D. 스코어링 현황 ────────────────────────
-  const band4 = core.filter((b) => b.coreScore === 4).length;
-  const band59 = core.filter((b) => b.coreScore >= 5 && b.coreScore <= 9).length;
-  const band10 = core.filter((b) => b.coreScore >= 10).length; // 데이터 있을 때만 표시
-  const goodTop = [...core]
-    .sort((a, b) => b.coreScore - a.coreScore || (a.dd ?? 99999) - (b.dd ?? 99999))
-    .slice(0, 8);
-
-  // ── E. 마감 캘린더 미니 (14일) ──────────────
-  const cal = Array.from({ length: 14 }, (_, i) => {
-    const d0 = new Date(Date.now() + i * DAY);
-    return {
-      i,
-      count: core.filter((b) => b.dd === i).length,
-      bucket: ddayBucket(i),
-      label: fmtMD(d0),
-    };
-  });
-  const calTotal = cal.reduce((s, x) => s + x.count, 0);
-
-  // ── F. 보조 ─────────────────────────────────
-  const newByDay = lastNDays(21).map((d0) => ({
-    date: fmtMD(d0),
-    count: core.filter((b) => b.notice_dt && sameDay(new Date(b.notice_dt), d0)).length,
-  }));
-  const byOrg = agg(core.map((b) => b.order_org ?? "미지정"))
-    .slice(0, 5)
-    .map(([name, count]) => ({ name, count }));
-  const lastRescore = rows.reduce<string | null>(
-    (mx, b) => (b.rescored_at && (!mx || b.rescored_at > mx) ? b.rescored_at : mx),
+  // 최근 업데이트 일자: 수집 커서(last_reg_dt) 우선, 없으면 최신 공고 등록일로 폴백.
+  const maxNotice = rows.reduce<string | null>(
+    (mx, b) => (b.notice_dt && (!mx || b.notice_dt > mx) ? b.notice_dt : mx),
     null
   );
 
   return {
     kpi,
-    board,
-    todayClose,
-    undated,
-    watchCount: d.watch.length,
-    clientChips,
-    clientGroups,
-    clientMore,
-    score: { band4, band59, band10, coreTotal: core.length },
-    goodTop,
-    cal,
-    calTotal,
-    newByDay,
-    byOrg,
-    brief: d.brief ? { date: d.brief.brief_date, summary: d.brief.summary } : null,
-    lastCollect: d.lastCollect,
-    lastRescore,
-    totalBids: d.totalBids,
-    archivedBids: d.archivedBids,
-    attBidCount: d.attBidCount,
-    rulesActive: d.rulesActive,
-    clientsCount: d.clientsCount,
+    donut,
+    feed,
+    trendGamri,
+    trendConsult,
+    lastCollect: d.lastCollect ?? maxNotice,
   };
 }
 
 // ── 유틸 ─────────────────────────────────────
-function agg(arr: string[]): [string, number][] {
-  const map = new Map<string, number>();
-  for (const x of arr) map.set(x, (map.get(x) ?? 0) + 1);
-  return [...map.entries()].sort((a, b) => b[1] - a[1]);
-}
 function lastNDays(n: number) {
   const now = new Date();
   const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -721,65 +471,27 @@ function fmtMD(d0: Date) {
   return `${String(d0.getMonth() + 1).padStart(2, "0")}.${String(d0.getDate()).padStart(2, "0")}`;
 }
 
-// ── 프리미티브 ───────────────────────────────
-function Kpi({
-  label,
-  value,
-  tone,
-  href,
-  decimal,
-  suffix,
-}: {
-  label: string;
-  value: number;
-  tone: string;
-  href?: string;
-  decimal?: boolean;
-  suffix?: string;
-}) {
-  const body = (
-    <Card className="p-3">
-      <p className="truncate text-[11px] text-subtle">{label}</p>
-      <p className={`mt-0.5 text-2xl font-bold ${tone}`}>
-        {decimal ? value.toLocaleString(undefined, { minimumFractionDigits: 0 }) : value.toLocaleString()}
-        {suffix && <span className="text-sm">{suffix}</span>}
-      </p>
-    </Card>
-  );
-  return href ? (
-    <Link href={href} className="block transition-transform hover:-translate-y-0.5">
-      {body}
-    </Link>
-  ) : (
-    body
-  );
-}
-
-function Meta({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <dt className="text-xs text-subtle">{label}</dt>
-      <dd className="font-medium text-text">{value}</dd>
-    </div>
-  );
-}
-
-// 위젯별 로딩 스켈레톤
+// ── 로딩 스켈레톤 ─────────────────────────────
 function DashboardSkeleton() {
   const Block = ({ className = "" }: { className?: string }) => (
     <div className={`animate-pulse rounded-card bg-border/40 ${className}`} />
   );
   return (
     <div>
-      <PageHeader title="통계 대시보드" screen="S-10" desc="주력·고객사·마감순위 현황을 불러오는 중…" />
-      <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Block key={i} className="h-16" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[3fr_2fr]">
-        <Block className="h-96" />
-        <Block className="h-96" />
+      <PageHeader
+        title="나라장터 입찰공고 실시간 모니터링"
+        screen="S-10"
+        desc="실시간 모니터링 데이터를 불러오는 중…"
+      />
+      <Block className="mb-4 h-10" />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[520px_minmax(0,1fr)]">
+        <div className="space-y-4">
+          <Block className="h-52" />
+          <Block className="h-72" />
+        </div>
+        <div className="space-y-4">
+          <Block className="h-[28rem]" />
+        </div>
       </div>
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Block className="h-64" />

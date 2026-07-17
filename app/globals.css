@@ -82,3 +82,12 @@ a {
   background-color: var(--color-accent);
   border-color: var(--color-accent);
 }
+
+/* 고객사(수요기관) 강조 깜빡임 — S-10 입찰 목록 */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.animate-blink {
+  animation: blink 1.1s ease-in-out infinite;
+}

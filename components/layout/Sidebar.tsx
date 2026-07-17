@@ -12,9 +12,13 @@ export function Sidebar({ role }: { role: Role | null }) {
   return (
     <aside className="hidden w-60 shrink-0 border-r border-border bg-surface md:block">
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <span className="text-lg font-extrabold tracking-tight text-primary">
-          입찰정보시스템
-        </span>
+        <Link
+          href="/dashboard/stats"
+          title="메인 페이지"
+          className="text-lg font-extrabold tracking-tight text-primary transition hover:opacity-80"
+        >
+          가덕씨엔에스
+        </Link>
       </div>
       <nav className="p-3">
         {NAV.map((group) => {

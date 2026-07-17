@@ -26,7 +26,7 @@ import { deriveStatus } from "@/lib/design/dday";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/utils/format";
 
 const BID_COLS =
-  "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,updated_at";
+  "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,raw,updated_at";
 
 export default function BidDetailPage() {
   const params = useParams<{ id: string }>();
@@ -151,6 +151,10 @@ export default function BidDetailPage() {
   const bid = bidQ.data;
   // ai_flags.matches = 추천 인력(FR-10, 03_ai_scripts.md §3.4). 없으면 플레이스홀더.
   const matched: MatchedMember[] = bid.ai_flags?.matches ?? [];
+
+  // 나라장터 공고상세 원본 링크 (raw.bidNtceDtlUrl / bidNtceUrl)
+  const raw = (bid.raw ?? {}) as Record<string, unknown>;
+  const naraUrl = (raw.bidNtceDtlUrl || raw.bidNtceUrl) as string | undefined;
 
   // 첨부: 차수(bid_seq)별 그룹 (attachmentsQ가 bid_seq desc 정렬 → 최신 차수 우선)
   const attGroups: { seq: string; items: BidAttachment[] }[] = [];
@@ -321,6 +325,19 @@ export default function BidDetailPage() {
                     </span>
                   )}
                 </span>
+              }
+              action={
+                naraUrl && (
+                  <a
+                    href={naraUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="나라장터 공고 상세(원본) 새 창"
+                    className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-xs font-semibold text-white shadow-card transition hover:opacity-90"
+                  >
+                    나라장터 입찰공고상세 <span aria-hidden>↗</span>
+                  </a>
+                )
               }
             />
             <div className="p-4">
