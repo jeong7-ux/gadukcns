@@ -11,6 +11,7 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { Pill } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ClassifyReview } from "@/components/admin/ClassifyReview";
 import type { Rule } from "@/lib/supabase/types";
 
 export default function RulesPage() {
@@ -54,25 +55,35 @@ function RulesInner() {
   const [rescoring, setRescoring] = useState(false);
   const [rescoreMsg, setRescoreMsg] = useState<string | null>(null);
 
-  // 현재 규칙으로 기존 공고 전체를 재계산. DB 함수 rescore_bids()(SECURITY DEFINER) RPC 호출.
+  // 현재 규칙으로 기존 공고 전체를 재계산. 서버 API(service key)에서 처리 → DB 함수 배포 불필요.
   async function rescore() {
     if (!confirm("현재 규칙으로 전체 공고의 점수·태그를 다시 계산합니다. 진행할까요?")) return;
     setRescoreMsg(null);
     setRescoring(true);
-    const { data, error } = await supabase.rpc("rescore_bids");
-    setRescoring(false);
-    if (error) {
-      // 함수 미배포(42883/PGRST202) 안내
-      const notFound = /rescore_bids|function|schema cache|PGRST202/i.test(error.message);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const res = await fetch("/api/rescore", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.access_token ?? ""}` },
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        setRescoreMsg(j?.error ?? "재스코어링 실패");
+        return;
+      }
       setRescoreMsg(
-        notFound
-          ? "rescore_bids() 함수가 아직 DB에 없습니다. supabase/schema.sql의 rescore_bids 함수를 SQL Editor에서 실행한 뒤 다시 시도하세요."
-          : `재스코어링 실패: ${error.message}`
+        `재스코어링 완료 — ${Number(j.processed).toLocaleString()}건 처리(변경 ${j.changed} · score≥5 ${j.gte5}).`
       );
-      return;
+      qc.invalidateQueries({ queryKey: ["rules"] });
+      qc.invalidateQueries({ queryKey: ["bids"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    } catch (e) {
+      setRescoreMsg((e as Error).message);
+    } finally {
+      setRescoring(false);
     }
-    setRescoreMsg(`재스코어링 완료 — ${Number(data).toLocaleString()}건 갱신됨.`);
-    qc.invalidateQueries({ queryKey: ["rules"] });
   }
 
   async function addRule() {
@@ -115,6 +126,9 @@ function RulesInner() {
         screen="S-12"
         desc="룰(가중치)은 데이터로 관리됩니다. 규칙 변경 후 '재스코어링'을 눌러야 기존 공고 점수에 반영됩니다(FR-05)."
       />
+
+      {/* AI 분류 검수 (수집 시 감리/컨설팅 분류 결과 검토·아카이브) */}
+      <ClassifyReview />
 
       {/* 재스코어링 — 규칙 변경을 기존 공고에 적용 */}
       <Card className="mb-4">

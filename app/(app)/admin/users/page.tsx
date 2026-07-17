@@ -6,13 +6,14 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { ADMIN_ONLY, ROLE_LABEL } from "@/lib/auth/roles";
 import { RoleGuard } from "@/components/layout/RoleGuard";
+import { useSession } from "@/lib/auth/SessionProvider";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { Pill } from "@/components/ui/Pill";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { fmtDate } from "@/lib/utils/format";
-import type { UserRow, UserStatus } from "@/lib/supabase/types";
+import type { UserRow, UserStatus, Role } from "@/lib/supabase/types";
 
 type AdminUserRow = Pick<UserRow, "user_id" | "name" | "dept" | "role" | "status" | "created_at"> & {
   email: string;
@@ -44,7 +45,14 @@ const STATUS_LABEL: Record<UserStatus, string> = {
 function UsersInner() {
   const supabase = getSupabaseClient();
   const qc = useQueryClient();
+  const { profile } = useSession();
   const [tab, setTab] = useState<"pending" | "all">("pending");
+  const [busy, setBusy] = useState<string | null>(null);
+
+  async function authHeader() {
+    const { data: { session } } = await supabase.auth.getSession();
+    return { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" };
+  }
 
   const q = useQuery({
     queryKey: ["admin-users", "v2-email"],
@@ -68,9 +76,63 @@ function UsersInner() {
       : list;
   }, [q.data, tab]);
 
+  // 승인/반려/정지 — 서버(service key)로 처리(RLS 무관하게 확실히)
   async function setStatus(u: AdminUserRow, status: UserStatus) {
-    await supabase.from("users").update({ status }).eq("user_id", u.user_id);
-    qc.invalidateQueries({ queryKey: ["admin-users", "v2-email"] });
+    setBusy(u.user_id);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: await authHeader(),
+        body: JSON.stringify({ user_id: u.user_id, status }),
+      });
+      if (!res.ok) {
+        alert((await res.json().catch(() => ({})))?.error ?? "상태 변경 실패");
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["admin-users", "v2-email"] });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // 역할 변경(경영진/전략기획/사업관리/관리자) — 서버 처리
+  async function setRole(u: AdminUserRow, role: Role) {
+    if (role === u.role) return;
+    if (role === "admin" && !confirm(`${u.name} 님을 '관리자'로 지정할까요? 관리자 전용 기능에 접근할 수 있습니다.`)) return;
+    setBusy(u.user_id);
+    try {
+      const res = await fetch("/api/admin/users", {
+        method: "PATCH",
+        headers: await authHeader(),
+        body: JSON.stringify({ user_id: u.user_id, role }),
+      });
+      if (!res.ok) {
+        alert((await res.json().catch(() => ({})))?.error ?? "역할 변경 실패");
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["admin-users", "v2-email"] });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // 계정 삭제(프로필+Auth). 되돌릴 수 없음.
+  async function deleteUser(u: AdminUserRow) {
+    if (!confirm(`${u.name}(${u.email}) 계정을 완전히 삭제할까요?\n되돌릴 수 없습니다.`)) return;
+    setBusy(u.user_id);
+    try {
+      const res = await fetch(`/api/admin/users?user_id=${encodeURIComponent(u.user_id)}`, {
+        method: "DELETE",
+        headers: await authHeader(),
+      });
+      if (!res.ok) {
+        alert((await res.json().catch(() => ({})))?.error ?? "삭제 실패");
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["admin-users", "v2-email"] });
+    } finally {
+      setBusy(null);
+    }
   }
 
   return (
@@ -126,7 +188,24 @@ function UsersInner() {
                   <td className="px-4 py-2.5 text-xs text-text">{u.email}</td>
                   <td className="px-4 py-2.5 font-medium text-text">{u.name}</td>
                   <td className="px-4 py-2.5 text-xs">{u.dept}</td>
-                  <td className="px-4 py-2.5 text-xs">{ROLE_LABEL[u.role]}</td>
+                  <td className="px-4 py-2.5">
+                    {u.user_id === profile?.user_id ? (
+                      <span className="text-xs text-text">{ROLE_LABEL[u.role]} (본인)</span>
+                    ) : (
+                      <select
+                        value={u.role}
+                        disabled={busy === u.user_id}
+                        onChange={(e) => setRole(u, e.target.value as Role)}
+                        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-accent disabled:opacity-40"
+                      >
+                        {(["exec", "strategy", "pm", "admin"] as const).map((r) => (
+                          <option key={r} value={r}>
+                            {ROLE_LABEL[r]}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     <Pill tone={STATUS_TONE[u.status]}>
                       {STATUS_LABEL[u.status]}
@@ -136,11 +215,12 @@ function UsersInner() {
                     {fmtDate(u.created_at)}
                   </td>
                   <td className="px-4 py-2.5">
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       {u.status !== "active" && (
                         <Button
                           variant="primary"
                           className="px-2 py-1 text-xs"
+                          disabled={busy === u.user_id}
                           onClick={() => setStatus(u, "active")}
                         >
                           승인
@@ -150,6 +230,7 @@ function UsersInner() {
                         <Button
                           variant="danger"
                           className="px-2 py-1 text-xs"
+                          disabled={busy === u.user_id}
                           onClick={() => setStatus(u, "rejected")}
                         >
                           반려
@@ -159,10 +240,21 @@ function UsersInner() {
                         <Button
                           variant="ghost"
                           className="px-2 py-1 text-xs"
+                          disabled={busy === u.user_id}
                           onClick={() => setStatus(u, "suspended")}
                         >
                           정지
                         </Button>
+                      )}
+                      {/* 삭제 — 본인 계정 제외 */}
+                      {u.user_id !== profile?.user_id && (
+                        <button
+                          onClick={() => deleteUser(u)}
+                          disabled={busy === u.user_id}
+                          className="rounded-md px-2 py-1 text-xs font-medium text-danger ring-1 ring-danger/40 transition hover:bg-danger/10 disabled:opacity-40"
+                        >
+                          삭제
+                        </button>
                       )}
                     </div>
                   </td>
