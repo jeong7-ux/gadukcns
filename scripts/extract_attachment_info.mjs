@@ -1,5 +1,6 @@
 // 첨부 정보 정규화: bids.raw 의 ntceSpecDocUrl1~10/ntceSpecFileNm1~10(+stdNtceDocUrl)를
 // bid_attachments 로 추출(다운로드 없음, downloaded=false). 노출(비아카이브) 공고 대상. 멱등.
+// 보호: downloaded=true(실물 다운로드된) 행은 삭제하지 않고 유지하며, 해당 URL은 재삽입도 생략.
 // 사용: node --env-file=.env.local scripts/extract_attachment_info.mjs
 import { createClient } from '@supabase/supabase-js';
 const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -27,7 +28,7 @@ function extractRows(bid) {
 }
 
 async function main() {
-  let page = 0, bidsWithAtt = 0, totalRows = 0, scanned = 0;
+  let page = 0, bidsWithAtt = 0, totalRows = 0, scanned = 0, protectedRows = 0;
   const PAGE = 500;
   for (;;) {
     const from = page * PAGE;
@@ -41,14 +42,29 @@ async function main() {
     if (!bids.length) break;
 
     const bidNos = bids.map((b) => b.bid_no);
-    // 멱등: 대상 공고의 기존 첨부행 제거 후 재삽입
-    const { error: de } = await sb.from('bid_attachments').delete().in('bid_no', bidNos);
+    // 보호: 이미 실물 다운로드된(downloaded=true) 행의 file_url 수집 — 삭제/중복삽입 금지.
+    const { data: kept, error: ke } = await sb
+      .from('bid_attachments')
+      .select('file_url')
+      .in('bid_no', bidNos)
+      .eq('downloaded', true);
+    if (ke) throw new Error('다운로드 행 조회 실패: ' + ke.message);
+    const keptUrls = new Set((kept ?? []).map((r) => r.file_url));
+    protectedRows += keptUrls.size;
+
+    // 멱등: 대상 공고의 재생성 가능 행(비다운로드)만 제거 후 재삽입. downloaded=true 는 보존.
+    const { error: de } = await sb
+      .from('bid_attachments')
+      .delete()
+      .in('bid_no', bidNos)
+      .or('downloaded.is.null,downloaded.eq.false');
     if (de) throw new Error('기존 첨부 삭제 실패: ' + de.message);
 
     const rows = [];
     for (const b of bids) {
       scanned++;
-      const r = extractRows(b);
+      // 이미 다운로드된 URL 은 재삽입 제외(다운로드 행 유지 → 중복 방지).
+      const r = extractRows(b).filter((x) => !keptUrls.has(x.file_url));
       if (r.length) bidsWithAtt++;
       rows.push(...r);
     }
@@ -60,6 +76,6 @@ async function main() {
     console.log(`  page ${page + 1}: 공고 ${scanned}건 처리, 첨부행 누적 ${totalRows}`);
     page++;
   }
-  console.log(`\n[done] 스캔 ${scanned}건 | 첨부 있는 공고 ${bidsWithAtt}건 | bid_attachments ${totalRows}행 적재(다운로드=false)`);
+  console.log(`\n[done] 스캔 ${scanned}건 | 첨부 있는 공고 ${bidsWithAtt}건 | 신규 적재 ${totalRows}행(다운로드=false) | 보호(downloaded=true) ${protectedRows}행 유지`);
 }
 main().catch((e) => { console.error('[FATAL]', e.message); process.exit(1); });
