@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { NAV, ADMIN_MENU } from "@/components/layout/nav";
+import { MobileNav } from "@/components/layout/MobileNav";
 import { Pill } from "@/components/ui/Pill";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
@@ -29,8 +30,9 @@ export function TopBar() {
 
   return (
     <header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-surface px-4">
-      {/* 왼쪽: S-10 홈 기준 네비게이션(브레드크럼) */}
+      {/* 왼쪽: 모바일 드로어(햄버거) + S-10 홈 기준 네비게이션(브레드크럼) */}
       <div className="flex min-w-0 items-center gap-1.5 text-sm">
+        <MobileNav />
         <Link href={HOME} className="flex shrink-0 items-center gap-1 font-bold text-primary hover:opacity-80">
           <span aria-hidden>🏠</span>
           <span className="hidden truncate sm:inline">나라장터 입찰공고 실시간 모니터링</span>

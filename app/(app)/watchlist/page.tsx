@@ -2,6 +2,7 @@
 
 // S-07 관심 목록 — FR-08. 접근: strategy/pm/admin.
 import { useState } from "react";
+import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { CAN_WATCH_WRITE } from "@/lib/auth/roles";
@@ -11,9 +12,10 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { AnalysisModal } from "@/components/watch/AnalysisModal";
-import { InfoCells, InfoHeaders } from "@/components/bids/InfoRowCells";
+import { InfoCells, InfoHeaders, eok, statusLabel } from "@/components/bids/InfoRowCells";
 import { requestAnalysis } from "@/lib/queries/analysis";
-import { daysUntil } from "@/lib/design/dday";
+import { daysUntil, ddayInfo, DDAY_PILL_CLASS } from "@/lib/design/dday";
+import { fmtDate } from "@/lib/utils/format";
 import type { WatchItem } from "@/lib/supabase/types";
 
 const norm = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -142,98 +144,73 @@ function WatchlistInner() {
           hint="입찰 상세(S-06)에서 ‘관심 추가’로 담을 수 있습니다."
         />
       ) : (
-        <Card className="overflow-x-auto">
-          <table className="w-full min-w-[900px] text-left text-xs">
-            <thead className="border-b border-border text-subtle">
-              <tr>
-                <InfoHeaders hideStatus />
-                <th className="px-3 py-2 font-medium">진행단계</th>
-                {isAdmin && <th className="px-3 py-2 font-medium">결정</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {q.data!.map((w) => {
-                const closed = (daysUntil(w.deadline_dt) ?? 0) < 0; // 마감 지남
-                return (
-                <tr key={`${w.bid_no}-${w.bid_seq}`} className={`align-top hover:bg-bg ${closed ? "opacity-60" : ""}`}>
-                  {/* S-10 입찰 정보 목록과 동일 6열: 상세·일정정보·기관정보·금액·사업명·공고번호 */}
-                  <InfoCells
-                    hideStatus
-                    bidNo={w.bid_no}
-                    title={w.title}
-                    orderOrg={w.order_org}
-                    demandOrg={w.demand_org}
-                    noticeDt={w.notice_dt}
-                    deadlineDt={w.deadline_dt}
-                    estPrice={w.est_price}
-                    needsReview={w.needs_review}
-                    demandClient={w.demand_client}
-                  />
-                  {/* 진행단계 — 상태 값 + 3단계 버튼(미요청→요청·진행중→완료) */}
-                  <td className="px-3 py-2">
-                    <div className="mb-1 text-[11px] font-medium text-subtle">
-                      {ANALYSIS_LABEL[w.analysis_status] ?? w.analysis_status}
-                    </div>
-                    {w.analysis_status === "done" ? (
-                      <button
-                        onClick={() => setModalBid(w)}
-                        className="inline-flex items-center gap-1 rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
-                      >
-                        📄 분석결과
-                      </button>
-                    ) : w.analysis_status === "none" ? (
-                      <button
-                        onClick={() => handleRequest(w)}
-                        className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
-                      >
-                        🔍 분석요청
-                      </button>
-                    ) : isAdmin ? (
-                      // 요청·진행중 · 관리자: 클릭 시 파일 업로드 모달(전부 업로드 후 '분석완료 확정')
-                      <button
-                        onClick={() => setModalBid(w)}
-                        className="inline-flex items-center gap-1 rounded-md bg-dday-soon px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
-                      >
-                        ⏳ 분석중 (업로드)
-                      </button>
-                    ) : (
-                      // 요청·진행중 · 일반계정: 대기 안내 메시지 + 취소
-                      <div className="inline-flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1 rounded-md bg-dday-soon/10 px-3 py-1.5 text-xs font-medium text-dday-soon ring-1 ring-dday-soon/30">
-                          ⏳ 분석중입니다. 잠시만 기다려주세요..
-                        </span>
-                        <button
-                          onClick={() => handleCancel(w)}
-                          title="분석요청 취소"
-                          className="rounded-md px-2.5 py-1.5 text-xs font-medium text-subtle ring-1 ring-border transition hover:bg-bg hover:text-text"
-                        >
-                          취소
-                        </button>
-                      </div>
-                    )}
-                  </td>
-                  {/* 결정 — 관리자만 노출(일반계정 숨김) */}
-                  {isAdmin && (
-                    <td className="px-3 py-2">
-                      <select
-                        value={w.decision}
-                        onChange={(e) => setDecision(w, e.target.value as WatchItem["decision"])}
-                        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-accent"
-                      >
-                        {(["review", "join", "drop"] as const).map((d) => (
-                          <option key={d} value={d}>
-                            {DECISION_LABEL[d]}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                  )}
+        <>
+          {/* 데스크톱(lg+): 테이블 (min-w 900px → 태블릿 이하에선 카드로 대체) */}
+          <Card className="hidden overflow-x-auto lg:block">
+            <table className="w-full min-w-[900px] text-left text-xs">
+              <thead className="border-b border-border text-subtle">
+                <tr>
+                  <InfoHeaders hideStatus />
+                  <th className="px-3 py-2 font-medium">진행단계</th>
+                  {isAdmin && <th className="px-3 py-2 font-medium">결정</th>}
                 </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </Card>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {q.data!.map((w) => {
+                  const closed = (daysUntil(w.deadline_dt) ?? 0) < 0; // 마감 지남
+                  return (
+                    <tr key={`${w.bid_no}-${w.bid_seq}`} className={`align-top hover:bg-bg ${closed ? "opacity-60" : ""}`}>
+                      {/* S-10 입찰 정보 목록과 동일 6열: 상세·일정정보·기관정보·금액·사업명·공고번호 */}
+                      <InfoCells
+                        hideStatus
+                        bidNo={w.bid_no}
+                        title={w.title}
+                        orderOrg={w.order_org}
+                        demandOrg={w.demand_org}
+                        noticeDt={w.notice_dt}
+                        deadlineDt={w.deadline_dt}
+                        estPrice={w.est_price}
+                        needsReview={w.needs_review}
+                        demandClient={w.demand_client}
+                      />
+                      {/* 진행단계 — 테이블/카드 공용 컴포넌트 */}
+                      <td className="px-3 py-2">
+                        <StageActions
+                          w={w}
+                          isAdmin={isAdmin}
+                          onRequest={handleRequest}
+                          onCancel={handleCancel}
+                          onOpenModal={setModalBid}
+                        />
+                      </td>
+                      {/* 결정 — 관리자만 노출(일반계정 숨김) */}
+                      {isAdmin && (
+                        <td className="px-3 py-2">
+                          <DecisionSelect w={w} onChange={setDecision} />
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Card>
+
+          {/* 모바일·태블릿(lg 미만): 카드 리스트 */}
+          <div className="space-y-3 lg:hidden">
+            {q.data!.map((w) => (
+              <WatchCard
+                key={`${w.bid_no}-${w.bid_seq}`}
+                w={w}
+                isAdmin={isAdmin}
+                onRequest={handleRequest}
+                onCancel={handleCancel}
+                onOpenModal={setModalBid}
+                onDecision={setDecision}
+              />
+            ))}
+          </div>
+        </>
       )}
 
       {modalBid && (
@@ -245,5 +222,187 @@ function WatchlistInner() {
         />
       )}
     </div>
+  );
+}
+
+/* ── 테이블/카드 공용 헬퍼 컴포넌트 (로직 단일화) ───────────────────── */
+
+interface StageActionsProps {
+  w: WatchRow;
+  isAdmin: boolean;
+  onRequest: (w: WatchRow) => void;
+  onCancel: (w: WatchRow) => void;
+  onOpenModal: (w: WatchRow) => void;
+}
+
+/** 진행단계(분석) — 상태 라벨 + 3단계 버튼(미요청→요청·진행중→완료). 테이블 셀·카드 공용. */
+function StageActions({ w, isAdmin, onRequest, onCancel, onOpenModal }: StageActionsProps) {
+  return (
+    <>
+      <div className="mb-1 text-[11px] font-medium text-subtle">
+        {ANALYSIS_LABEL[w.analysis_status] ?? w.analysis_status}
+      </div>
+      {w.analysis_status === "done" ? (
+        <button
+          onClick={() => onOpenModal(w)}
+          className="inline-flex items-center gap-1 rounded-md bg-success px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+        >
+          📄 분석결과
+        </button>
+      ) : w.analysis_status === "none" ? (
+        <button
+          onClick={() => onRequest(w)}
+          className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+        >
+          🔍 분석요청
+        </button>
+      ) : isAdmin ? (
+        // 요청·진행중 · 관리자: 클릭 시 파일 업로드 모달(전부 업로드 후 '분석완료 확정')
+        <button
+          onClick={() => onOpenModal(w)}
+          className="inline-flex items-center gap-1 rounded-md bg-dday-soon px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90"
+        >
+          ⏳ 분석중 (업로드)
+        </button>
+      ) : (
+        // 요청·진행중 · 일반계정: 대기 안내 메시지 + 취소
+        <div className="inline-flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1 rounded-md bg-dday-soon/10 px-3 py-1.5 text-xs font-medium text-dday-soon ring-1 ring-dday-soon/30">
+            ⏳ 분석중입니다. 잠시만 기다려주세요..
+          </span>
+          <button
+            onClick={() => onCancel(w)}
+            title="분석요청 취소"
+            className="rounded-md px-2.5 py-1.5 text-xs font-medium text-subtle ring-1 ring-border transition hover:bg-bg hover:text-text"
+          >
+            취소
+          </button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** 결정 select — 관리자 전용. 테이블 셀·카드 공용. */
+function DecisionSelect({
+  w,
+  onChange,
+}: {
+  w: WatchRow;
+  onChange: (w: WatchRow, decision: WatchItem["decision"]) => void;
+}) {
+  return (
+    <select
+      value={w.decision}
+      onChange={(e) => onChange(w, e.target.value as WatchItem["decision"])}
+      className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-text outline-none focus:border-accent"
+    >
+      {(["review", "join", "drop"] as const).map((d) => (
+        <option key={d} value={d}>
+          {DECISION_LABEL[d]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+interface WatchCardProps extends StageActionsProps {
+  onDecision: (w: WatchRow, decision: WatchItem["decision"]) => void;
+}
+
+/** 모바일·태블릿(lg 미만) 카드 — 테이블 6열과 동일 정보 리플로우. */
+function WatchCard({ w, isAdmin, onRequest, onCancel, onOpenModal, onDecision }: WatchCardProps) {
+  const info = ddayInfo(w.deadline_dt);
+  const closed = (daysUntil(w.deadline_dt) ?? 0) < 0; // 마감 지남
+  const pillText =
+    info.days === null ? statusLabel(info.days) : `${statusLabel(info.days)} · ${info.label}`;
+
+  return (
+    <Card className={`p-3 ${closed ? "opacity-60" : ""}`}>
+      {/* 상단: 사업명(→상세) + D-day 상태 pill */}
+      <div className="flex items-start justify-between gap-2">
+        <Link
+          href={`/bids/${encodeURIComponent(w.bid_no)}`}
+          className="flex min-w-0 items-center gap-1.5 hover:text-primary"
+        >
+          {w.needs_review && (
+            <span className="shrink-0 rounded bg-dday-soon/15 px-1 text-[10px] font-semibold text-dday-soon" title="AI 분류 검수 필요">
+              검수
+            </span>
+          )}
+          <span className="truncate text-sm font-semibold text-text" title={w.title ?? ""}>
+            {w.title ?? "제목 없음"}
+          </span>
+        </Link>
+        <span
+          className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 text-[10px] font-semibold ${
+            info.days === null ? DDAY_PILL_CLASS.far : DDAY_PILL_CLASS[info.bucket]
+          }`}
+        >
+          {pillText}
+        </span>
+      </div>
+
+      {/* 정보 그리드 — 기관정보·일정·금액·공고번호 */}
+      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[11px]">
+        {/* 수요기관 */}
+        <div className="col-span-2 flex items-center gap-1">
+          <span className="shrink-0 rounded bg-primary/10 px-1 text-[10px] text-primary">수요</span>
+          {w.demand_client && (
+            <span className="shrink-0 text-accent" title={`고객사: ${w.demand_client}`} aria-label="고객사">⭐</span>
+          )}
+          <span
+            className={`truncate ${w.demand_client ? "animate-blink font-semibold text-accent" : "text-text"}`}
+            title={w.demand_org ?? ""}
+          >
+            {w.demand_org ?? "-"}
+          </span>
+        </div>
+        {/* 공고기관 */}
+        <div className="col-span-2 flex items-center gap-1">
+          <span className="shrink-0 rounded bg-bg px-1 text-[10px] text-subtle ring-1 ring-border">공고</span>
+          <span className="truncate text-subtle" title={w.order_org ?? ""}>{w.order_org ?? "-"}</span>
+        </div>
+        {/* 공개일 */}
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 rounded bg-bg px-1 text-[10px] text-subtle ring-1 ring-border">공개</span>
+          <span className="text-text">{w.notice_dt ? fmtDate(w.notice_dt) : "-"}</span>
+        </div>
+        {/* 마감일 */}
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 rounded bg-dday-urgent/10 px-1 text-[10px] text-dday-urgent">마감</span>
+          <span className="text-text">{w.deadline_dt ? fmtDate(w.deadline_dt) : "미정"}</span>
+        </div>
+        {/* 금액 */}
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 text-subtle">금액</span>
+          <span className="font-medium text-text">{eok(w.est_price)}</span>
+        </div>
+        {/* 공고번호 */}
+        <div className="flex items-center gap-1">
+          <span className="shrink-0 text-subtle">공고</span>
+          <span className="truncate font-mono text-subtle" title={w.bid_no}>{w.bid_no}</span>
+        </div>
+      </div>
+
+      {/* 진행단계 */}
+      <div className="mt-3 border-t border-border pt-3">
+        <StageActions
+          w={w}
+          isAdmin={isAdmin}
+          onRequest={onRequest}
+          onCancel={onCancel}
+          onOpenModal={onOpenModal}
+        />
+      </div>
+
+      {/* 결정 — 관리자만 */}
+      {isAdmin && (
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-[11px] font-medium text-subtle">결정</span>
+          <DecisionSelect w={w} onChange={onDecision} />
+        </div>
+      )}
+    </Card>
   );
 }

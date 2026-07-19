@@ -25,7 +25,7 @@ export function eok(v: number | null | undefined): string {
   return `${v}`;
 }
 
-function statusLabel(dd: number | null): string {
+export function statusLabel(dd: number | null): string {
   if (dd === null) return "마감미정";
   if (dd < 0) return "마감";
   if (dd === 0) return "오늘마감";
