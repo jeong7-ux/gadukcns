@@ -37,6 +37,7 @@ const {
   NARA_BID_TYPES = 'servc',       // 수집 유형(쉼표구분): servc|cnstwk|thng. 기본 용역만.
   COLLECT_SOURCE = 'nara',        // collect_cursor.source
   COLLECT_TRIGGER = 'cron',       // collect_runs.trigger — cron(자동) / manual
+  COLLECT_SKIP_PRICES = '',       // '1'이면 가격(기초금액) 조회 생략 — 대량 갭 백필용(§7-3과 동일). 신규 공고는 예정가 미공개라 손실 적음.
 } = process.env;
 
 // 유형 → 오퍼레이션 접미사(실측 확정). 목록/가격 op는 접미사만 상이.
@@ -562,11 +563,15 @@ async function main() {
     // 변경이력: 목록 응답에서 파생분을 멱등 append
     await appendChanges(sb, changes);
 
-    console.log(`[INFO] [${type}] 수집 공고 ${bids.length}건 — 가격 처리 시작`);
-    // 부분 실패 격리: 공고별로 순차 처리, 한 건 실패가 배치를 멈추지 않음
-    for (const bid of bids) {
-      await collectPrice(sb, ops.price, bid);
-      await sleep(150);
+    if (COLLECT_SKIP_PRICES === '1') {
+      console.log(`[INFO] [${type}] 수집 공고 ${bids.length}건 — 가격 조회 생략(COLLECT_SKIP_PRICES=1)`);
+    } else {
+      console.log(`[INFO] [${type}] 수집 공고 ${bids.length}건 — 가격 처리 시작`);
+      // 부분 실패 격리: 공고별로 순차 처리, 한 건 실패가 배치를 멈추지 않음
+      for (const bid of bids) {
+        await collectPrice(sb, ops.price, bid);
+        await sleep(150);
+      }
     }
   }
 
