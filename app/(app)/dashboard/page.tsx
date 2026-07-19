@@ -10,10 +10,8 @@ import { fetchBids } from "@/lib/queries/bids";
 import { EMPTY_FILTERS } from "@/components/bids/FilterBar";
 import { useRealtimeInvalidate } from "@/lib/hooks/useRealtimeInvalidate";
 import { BidCard } from "@/components/bids/BidCard";
-import { CleanupPanel } from "@/components/bids/CleanupPanel";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { useSession } from "@/lib/auth/SessionProvider";
 
 type Tab = "전체" | "감리" | "컨설팅";
 const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -28,7 +26,6 @@ export default function DashboardPage() {
 
 function DashboardInner() {
   const supabase = getSupabaseClient();
-  const { role } = useSession();
   const [q, setQ] = useState("");
 
   // S-10 '입찰 공고 요약' KPI 연동 (URL 파라미터): 당일신규(today)·감리/컨설팅(cat)
@@ -72,8 +69,6 @@ function DashboardInner() {
         screen="S-04"
         desc="나라장터 수집·AI 분석 공고를 실시간으로 확인합니다."
       />
-
-      {role === "admin" && <CleanupPanel />}
 
       {isToday && (
         <div className="mb-3 flex items-center justify-between rounded-lg bg-primary/5 px-3 py-2 text-xs ring-1 ring-primary/20">
