@@ -19,6 +19,7 @@ import {
   type ClassifyStats,
   type RawBid,
 } from "./classify";
+import { syncAttachments } from "./attachments";
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -47,6 +48,7 @@ export interface CollectRunResult {
   scanned: number;
   bidsUpserted: number;
   changesAppended: number;
+  attachmentsUpserted: number; // bid_attachments 정규화 삽입 행 수
   durationMs: number;
   checks: Record<string, boolean>;
   errors: string[];
@@ -208,7 +210,7 @@ export async function runBoundedCollect(
     status_refreshed: false,
   };
   const errors: string[] = [];
-  let pages = 0, scanned = 0, bidsUpserted = 0, changesAppended = 0;
+  let pages = 0, scanned = 0, bidsUpserted = 0, changesAppended = 0, attachmentsUpserted = 0;
 
   // collect_runs 시작 기록(테이블 미배포 시 runId=null·runsTableDeployed=false)
   //   백그라운드 위임 경로에서는 API 라우트가 이미 running 행을 만들어 두므로(즉시 runId 반환),
@@ -306,6 +308,18 @@ export async function runBoundedCollect(
         checks.upsert_ok = true;
       }
     }
+    // 첨부 정보 정규화(S-06 상세는 bid_attachments 를 읽는다) — 수집 단계에 내장해
+    //   "수집됐는데 첨부가 비어 있는" 재발(§53·§55)을 막는다. 실패해도 수집은 유지.
+    if (upsertRows.length) {
+      try {
+        const att = await syncAttachments(sb, upsertRows);
+        attachmentsUpserted = att.inserted;
+        checks.attachments_ok = true;
+      } catch (e) {
+        errors.push(`첨부 정규화: ${(e as Error).message}`);
+      }
+    }
+
     // 분류 결정 캐시/감사 기록(테이블 배포 시)
     if (ctx.hasClsTable) await persistDecisions(sb, decisions);
   } catch (e) {
@@ -363,6 +377,7 @@ export async function runBoundedCollect(
     scanned,
     bidsUpserted,
     changesAppended,
+    attachmentsUpserted,
     durationMs,
     checks,
     errors: errors.slice(0, 20),

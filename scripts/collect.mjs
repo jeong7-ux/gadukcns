@@ -75,6 +75,7 @@ const runStats = {
   bidsUpserted: 0,
   pricesUpserted: 0,
   changesAppended: 0,
+  attachmentsUpserted: 0,
   cursorAdvanced: false,
 };
 const checks = { env_ok: false, api_reachable: false, upsert_ok: false, status_refreshed: false };
@@ -407,6 +408,17 @@ async function collectBids(sb, ops, type, inqryBgnDt, inqryEndDt) {
         runStats.bidsUpserted += rows.length;
         checks.upsert_ok = true;
         console.log(`[INFO] [${type}] bids upsert: page ${pageNo}, ${rows.length}건`);
+        // 첨부 정보 정규화(S-06은 bid_attachments를 읽는다). 수집 단계에 내장해
+        //   "수집됐는데 첨부가 비어 있는" 재발(§53·§55)을 막는다. lib/collect/attachments.ts와 동일 규칙.
+        //   COLLECT_SKIP_ATTACHMENTS=1 로 대량 백필 시 생략 가능.
+        if (process.env.COLLECT_SKIP_ATTACHMENTS !== '1') {
+          try {
+            const n = await syncAttachments(rows);
+            runStats.attachmentsUpserted = (runStats.attachmentsUpserted ?? 0) + n;
+          } catch (e) {
+            fail(`[${type}] 첨부 정규화 pageNo=${pageNo}`, e);
+          }
+        }
       }
     }
 
@@ -417,6 +429,59 @@ async function collectBids(sb, ops, type, inqryBgnDt, inqryEndDt) {
   }
 
   return { bids: [...seen.values()], changes, maxRegIso };
+}
+
+// ---------------------------------------------------------------------
+// 2b) 첨부 정보 정규화 — bids.raw(ntceSpecDocUrl1~10/ntceSpecFileNm1~10, stdNtceDocUrl)
+//     → bid_attachments. 다운로드는 하지 않는다(attachments.mjs 담당). 멱등.
+//     stdNtceDocUrl은 ntceSpecDocUrl1과 같은 URL인 경우가 많아, 실제 파일명을 살리기 위해
+//     첨부를 먼저 만들고 중복되지 않을 때만 규격서 행을 추가한다.
+//     보호: downloaded=true 행은 삭제·재삽입 대상에서 제외.
+// ---------------------------------------------------------------------
+function extractAttachmentRows(bid) {
+  const raw = bid.raw || {};
+  const s = (v) => (v == null ? '' : String(v).trim());
+  const rows = [];
+  const seen = new Set();
+  for (let i = 1; i <= 10; i++) {
+    const url = s(raw[`ntceSpecDocUrl${i}`]);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    rows.push({
+      bid_no: bid.bid_no, bid_seq: bid.bid_seq, seq: i, doc_type: '첨부',
+      file_name: s(raw[`ntceSpecFileNm${i}`]) || null, file_url: url, downloaded: false,
+    });
+  }
+  const std = s(raw.stdNtceDocUrl);
+  if (std && !seen.has(std)) {
+    rows.push({
+      bid_no: bid.bid_no, bid_seq: bid.bid_seq, seq: 0, doc_type: '규격서',
+      file_name: '규격서(공고)', file_url: std, downloaded: false,
+    });
+  }
+  return rows;
+}
+
+async function syncAttachments(bids) {
+  const targets = bids.filter((b) => extractAttachmentRows(b).length > 0);
+  if (!targets.length) return 0;
+  const bidNos = [...new Set(targets.map((b) => b.bid_no))];
+
+  const { data: kept, error: ke } = await sb
+    .from('bid_attachments').select('file_url').in('bid_no', bidNos).eq('downloaded', true);
+  if (ke) throw new Error('다운로드 행 조회 실패: ' + ke.message);
+  const keptUrls = new Set((kept ?? []).map((r) => r.file_url));
+
+  const { error: de } = await sb
+    .from('bid_attachments').delete().in('bid_no', bidNos)
+    .or('downloaded.is.null,downloaded.eq.false');
+  if (de) throw new Error('첨부 정리 실패: ' + de.message);
+
+  const rows = targets.flatMap(extractAttachmentRows).filter((r) => !keptUrls.has(r.file_url));
+  if (!rows.length) return 0;
+  const { error: ie } = await sb.from('bid_attachments').insert(rows);
+  if (ie) throw new Error('첨부 삽입 실패: ' + ie.message);
+  return rows.length;
 }
 
 // ---------------------------------------------------------------------
