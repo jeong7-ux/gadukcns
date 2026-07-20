@@ -5,8 +5,6 @@ import { useState } from "react";
 import { useParams } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { useSession } from "@/lib/auth/SessionProvider";
-import { signedUrl } from "@/lib/queries/analysis";
 import type {
   Bid,
   BidPrice,
@@ -33,27 +31,9 @@ export default function BidDetailPage() {
   const bidNo = decodeURIComponent(params.id);
   const supabase = getSupabaseClient();
   const qc = useQueryClient();
-  const { role } = useSession();
-  const isAdmin = role === "admin";
   const [tab, setTab] = useState<"price" | "changes">("price");
 
-  // 첨부 로컬 저장(나라장터 원본 다운로드 → storage/bid-attachments) + 로컬 열람
-  async function fetchAttachmentLocal(id: number) {
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-    const res = await fetch("/api/attachment/fetch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token ?? ""}` },
-      body: JSON.stringify({ id }),
-    });
-    if (res.ok) qc.invalidateQueries({ queryKey: ["bid_attachments", bidNo] });
-    else alert("로컬 저장 실패: " + ((await res.json().catch(() => ({})))?.error ?? ""));
-  }
-  async function openLocal(path: string) {
-    const url = await signedUrl(supabase, path);
-    if (url) window.open(url, "_blank", "noopener");
-  }
+  // 첨부는 로컬 저장 없이 나라장터(g2b) 원본 URL로 바로 다운로드한다.
   const [gen, setGen] = useState<{ loading: boolean; error: string | null }>({
     loading: false,
     error: null,
@@ -363,43 +343,35 @@ export default function BidDetailPage() {
                               <span className="shrink-0 rounded bg-bg px-1.5 py-0.5 text-[11px] text-subtle ring-1 ring-border">
                                 {a.doc_type ?? "첨부"}
                               </span>
-                              <span className="truncate text-sm text-text">
-                                {a.file_name ?? "(파일명 없음)"}
-                              </span>
-                              {a.extracted_text && (
-                                <Pill tone="success">본문 추출됨</Pill>
-                              )}
-                            </div>
-                            <div className="flex shrink-0 items-center gap-2">
-                              {a.downloaded && a.storage_path && (
-                                <button
-                                  onClick={() => openLocal(a.storage_path!)}
-                                  className="text-xs font-medium text-success hover:underline"
-                                >
-                                  열기(로컬) ↗
-                                </button>
-                              )}
-                              {isAdmin && a.file_url && !a.downloaded && (
-                                <button
-                                  onClick={() => fetchAttachmentLocal(a.id)}
-                                  className="rounded px-1.5 py-0.5 text-xs text-accent ring-1 ring-border hover:bg-bg"
-                                >
-                                  로컬 저장
-                                </button>
-                              )}
                               {a.file_url ? (
                                 <a
                                   href={a.file_url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-xs text-subtle hover:underline"
+                                  title={`나라장터에서 다운로드: ${a.file_name ?? ""}`}
+                                  className="truncate text-sm text-text hover:text-primary hover:underline"
                                 >
-                                  원본 ↗
+                                  {a.file_name ?? "(파일명 없음)"}
                                 </a>
                               ) : (
-                                !a.downloaded && (
-                                  <span className="text-xs text-subtle">URL 없음</span>
-                                )
+                                <span className="truncate text-sm text-text">
+                                  {a.file_name ?? "(파일명 없음)"}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {a.file_url ? (
+                                <a
+                                  href={a.file_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="나라장터(g2b) 원본 파일 다운로드"
+                                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium text-primary ring-1 ring-border hover:bg-bg"
+                                >
+                                  다운로드 <span aria-hidden>↓</span>
+                                </a>
+                              ) : (
+                                <span className="text-xs text-subtle">URL 없음</span>
                               )}
                             </div>
                           </li>
