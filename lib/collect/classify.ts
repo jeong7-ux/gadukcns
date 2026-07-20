@@ -5,7 +5,9 @@
 //   수동 "바로수집"(runner.ts)에서만 호출한다(자동수집 폐지).
 // =====================================================================
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { chatJson, openRouterKey, type ChatMessage } from "@/lib/ai/openrouter";
+// 상대경로 import 유지: 이 모듈은 Next(webpack) 외에 Netlify Background Function(esbuild)
+//   에서도 번들되므로 tsconfig paths(@/) 해석에 의존하지 않는다.
+import { chatJson, openRouterKey, type ChatMessage } from "../ai/openrouter";
 
 // ── 설정(env override) ──────────────────────────────────────────
 const CFG = {

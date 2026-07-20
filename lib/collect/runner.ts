@@ -10,6 +10,7 @@
 // 매핑은 scripts/collect.mjs(실측 매핑 API_실측매핑.md)와 동일하게 유지한다.
 // =====================================================================
 import type { SupabaseClient } from "@supabase/supabase-js";
+// 상대경로 import: Netlify Background Function(esbuild)에서도 동일 모듈을 번들한다.
 import {
   loadClassifyContext,
   classifyBids,
@@ -17,7 +18,7 @@ import {
   persistDecisions,
   type ClassifyStats,
   type RawBid,
-} from "@/lib/collect/classify";
+} from "./classify";
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -35,6 +36,7 @@ export interface CollectRunOptions {
   maxPages?: number; // 유형당 페이지 상한(타임아웃 방지). 기본 6(=최대 600건)
   numOfRows?: number; // 페이지당 행. 기본 100
   triggeredBy?: string | null; // 실행자 user_id(감사)
+  runId?: number | null; // 이미 생성된 collect_runs 행(백그라운드 위임 경로). 있으면 insert 생략
 }
 export interface CollectRunResult {
   runId: number | null;
@@ -209,9 +211,17 @@ export async function runBoundedCollect(
   let pages = 0, scanned = 0, bidsUpserted = 0, changesAppended = 0;
 
   // collect_runs 시작 기록(테이블 미배포 시 runId=null·runsTableDeployed=false)
-  let runId: number | null = null;
+  //   백그라운드 위임 경로에서는 API 라우트가 이미 running 행을 만들어 두므로(즉시 runId 반환),
+  //   insert 대신 조회범위만 갱신한다. 인라인 경로(로컬 dev)에서는 기존대로 insert.
+  let runId: number | null = opts.runId ?? null;
   let runsTableDeployed = true;
-  {
+  if (runId != null) {
+    const { error } = await sb
+      .from("collect_runs")
+      .update({ window_bgn: windowBgn, window_end: windowEnd, checks })
+      .eq("id", runId);
+    if (error) runsTableDeployed = false;
+  } else {
     const { data, error } = await sb
       .from("collect_runs")
       .insert({

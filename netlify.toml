@@ -12,3 +12,10 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# 사용자 정의 함수 — "바로수집" 본체(collect-background.mts, 최대 15분).
+#   동기 함수 응답 상한(10~26초)을 넘기던 수집을 백그라운드로 분리했다.
+#   결과는 응답이 아니라 collect_runs 테이블로 전달되고, 프론트는 GET 폴링으로 읽는다.
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
