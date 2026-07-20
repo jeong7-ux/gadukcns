@@ -183,7 +183,10 @@ export function CollectButton({ fallbackTime }: { fallbackTime?: string | null }
     return () => clearInterval(t);
   }, [pendingRunId]);
 
-  const canTrigger = data?.canTrigger ?? true;
+  // 수집 실행은 관리자 전용(서버 GET이 역할을 판정해 canTrigger로 내려준다).
+  //   권한이 없으면 버튼을 아예 렌더하지 않는다(비활성 버튼 노출 대신). 조회는 전체 허용이라
+  //   "최근 갱신" 표시는 유지. 판정 전(로딩)에는 노출하지 않아 깜빡임을 막는다.
+  const canTrigger = data?.canTrigger === true;
   const running = pendingRunId != null || latest?.status === "running" || trigger.isPending;
   // 최근 갱신 일시(실데이터): 최근 실행 완료/시작 > 폴백(대시보드 last collect)
   const collectedAt = fmtKst(latest?.finished_at ?? latest?.started_at ?? fallbackTime);
@@ -193,16 +196,20 @@ export function CollectButton({ fallbackTime }: { fallbackTime?: string | null }
       <span className="text-xs text-subtle">
         최근 갱신 <span className="font-medium text-text">{collectedAt}</span>
       </span>
-      <button
-        onClick={() => trigger.mutate()}
-        disabled={!canTrigger || running}
-        title={canTrigger ? "최근 공고를 즉시 수집합니다" : "운영자(strategy/pm/admin) 전용"}
-        className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-      >
-        {running ? `수집 중…${pendingRunId != null ? ` ${elapsed}초` : ""}` : "⚡ 바로수집"}
-      </button>
-      {note && <span className="hidden text-xs text-success md:inline">{note}</span>}
-      {err && <span className="text-xs text-dday-urgent">{err}</span>}
+      {canTrigger && (
+        <>
+          <button
+            onClick={() => trigger.mutate()}
+            disabled={running}
+            title="최근 공고를 즉시 수집합니다 (관리자 전용)"
+            className="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {running ? `수집 중…${pendingRunId != null ? ` ${elapsed}초` : ""}` : "⚡ 바로수집"}
+          </button>
+          {note && <span className="hidden text-xs text-success md:inline">{note}</span>}
+          {err && <span className="text-xs text-dday-urgent">{err}</span>}
+        </>
+      )}
     </div>
   );
 }

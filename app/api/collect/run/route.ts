@@ -4,7 +4,7 @@
 //         (동기 함수 응답 상한 10~26초 < 실제 수집 소요 ~30초+ → 응답 유실 문제 근본 해결)
 //         백그라운드 함수가 없는 환경(로컬 next dev 등)은 자동으로 인라인 실행으로 폴백.
 //   GET : 최근 수집 이력 조회(모니터·폴링용). collect_runs 미배포 시 deployed:false.
-//   권한: 트리거는 strategy/pm/admin(그룹/운영 권한), 조회는 active 사용자 전체.
+//   권한: 트리거는 **관리자(admin) 전용**, 조회는 active 사용자 전체.
 import { NextRequest, NextResponse } from "next/server";
 import { getRequester, serviceClient } from "@/lib/server/auth";
 import { runBoundedCollect } from "@/lib/collect/runner";
@@ -13,7 +13,8 @@ import { COLLECT_TOKEN_HEADER, collectRunToken } from "@/lib/collect/trigger-tok
 export const runtime = "nodejs";
 export const maxDuration = 60; // 인라인 폴백 경로용. 백그라운드 위임 시 POST는 수 초 내 반환된다.
 
-const CAN_TRIGGER = ["strategy", "pm", "admin"];
+// 수집 트리거는 **관리자 전용**(2026-07-20 지시). 조회(GET)는 active 사용자 전체 허용.
+const CAN_TRIGGER = ["admin"];
 const BASE_RUN_COLUMNS =
   "id,trigger,status,started_at,finished_at,duration_ms,window_bgn,window_end,pages,scanned,bids_upserted,prices_upserted,changes_appended,cursor_advanced,error_count,errors,checks";
 const BACKGROUND_FN_PATH = "/.netlify/functions/collect-background";
@@ -73,7 +74,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const me = await getRequester(tokenOf(req));
   if (!me || !CAN_TRIGGER.includes(me.role)) {
-    return NextResponse.json({ error: "수집 실행 권한이 없습니다(운영자 전용)." }, { status: 403 });
+    return NextResponse.json({ error: "수집 실행 권한이 없습니다(관리자 전용)." }, { status: 403 });
   }
   if (!process.env.NARA_SERVICE_KEY || !process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
     return NextResponse.json(
