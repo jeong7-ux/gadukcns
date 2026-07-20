@@ -10,6 +10,7 @@ import type {
   BidPrice,
   BidChange,
   BidAttachment,
+  BidAnalysisKpi,
   MatchedMember,
 } from "@/lib/supabase/types";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -118,6 +119,18 @@ export default function BidDetailPage() {
       return (data as BidAttachment[]) ?? [];
     },
   });
+  // 분석 KPI — 1페이지상세요약 업로드 시 자동 파싱된 지표. 없으면 카드 자체를 숨긴다.
+  const kpiQ = useQuery({
+    queryKey: ["bid_analysis_kpi", bidNo],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("bid_analysis_kpi")
+        .select("*")
+        .eq("bid_no", bidNo)
+        .maybeSingle();
+      return (data as BidAnalysisKpi | null) ?? null;
+    },
+  });
 
   if (bidQ.isLoading) return <p className="text-sm text-subtle">불러오는 중…</p>;
   if (bidQ.isError || !bidQ.data)
@@ -148,6 +161,7 @@ export default function BidDetailPage() {
   }
   const attTotal = attachmentsQ.data?.length ?? 0;
   const attMultiSeq = attGroups.length > 1;
+  const kpi = kpiQ.data ?? null;
 
   return (
     <div>
@@ -180,6 +194,82 @@ export default function BidDetailPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
         <div className="space-y-4">
+          {/* 분석 KPI — 1페이지상세요약 파싱 결과(있을 때만) */}
+          {kpi && (
+            <Card>
+              <CardHeader
+                title={
+                  <span className="flex flex-wrap items-center gap-2">
+                    분석 KPI
+                    {kpi.go_decision && (
+                      <Pill tone={GO_TONE[kpi.go_decision]}>
+                        {GO_LABEL[kpi.go_decision]}
+                      </Pill>
+                    )}
+                    {kpi.go_reason && (
+                      <span className="text-xs font-normal text-subtle">
+                        {kpi.go_reason}
+                      </span>
+                    )}
+                  </span>
+                }
+              />
+              <div className="p-4">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+                  <KpiTile
+                    label="감리예산"
+                    value={fmtWon(kpi.audit_budget_krw)}
+                    sub={kpiUnit(kpi, "감리예산")}
+                  />
+                  <KpiTile
+                    label="감리비율"
+                    value={fmtRange(kpi.audit_ratio_pct_min, kpi.audit_ratio_pct_max, "%")}
+                    sub={kpiUnit(kpi, "감리비율")}
+                  />
+                  <KpiTile
+                    label="투입공수"
+                    value={fmtRange(kpi.effort_md_min, kpi.effort_md_max, " MD")}
+                    sub={kpiUnit(kpi, "투입공수")}
+                  />
+                  <KpiTile
+                    label="대상사업"
+                    value={fmtWon(kpi.target_budget_krw)}
+                    sub={kpiUnit(kpi, "대상사업")}
+                  />
+                  <KpiTile
+                    label="독소조항"
+                    value={kpi.toxic_total !== null ? `${kpi.toxic_total}건` : "-"}
+                    sub={severityText(kpi) ?? kpiUnit(kpi, "독소조항")}
+                    tone={kpi.toxic_total && kpi.toxic_total > 0 ? "danger" : undefined}
+                  />
+                  {/* 라벨이 가변인 슬롯(요구사항·MD단가 등)은 원문 그대로 노출 */}
+                  {(kpi.extra_kpis ?? []).map((e) => (
+                    <KpiTile
+                      key={e.label}
+                      label={e.label}
+                      value={e.value ?? "-"}
+                      sub={e.unit}
+                    />
+                  ))}
+                </div>
+                {(kpi.parse_warnings?.length ?? 0) > 0 && (
+                  <ul className="mt-3 space-y-1 rounded-md bg-bg p-2.5 ring-1 ring-border">
+                    {kpi.parse_warnings!.map((w, i) => (
+                      <li key={i} className="text-xs text-subtle">
+                        ⚠ {w}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-3 text-[11px] text-subtle">
+                  출처: {kpi.source_doc_type}
+                  {kpi.parsed_at && ` · 파싱 ${fmtDateTime(kpi.parsed_at)}`}
+                  {kpi.parser_version && ` · ${kpi.parser_version}`}
+                </p>
+              </div>
+            </Card>
+          )}
+
           {/* AI 브리핑 카드 */}
           <Card>
             <CardHeader
@@ -457,6 +547,67 @@ function Meta({ label, value }: { label: string; value: string }) {
     <div>
       <dt className="text-xs text-subtle">{label}</dt>
       <dd className="font-medium text-text">{value}</dd>
+    </div>
+  );
+}
+
+/* ── 분석 KPI 표시 헬퍼 ─────────────────────────────────────────── */
+
+const GO_LABEL: Record<string, string> = {
+  go: "GO",
+  conditional_go: "조건부 GO",
+  no_go: "NO-GO",
+  unknown: "판정 미상",
+};
+const GO_TONE: Record<string, "success" | "accent" | "danger" | "muted"> = {
+  go: "success",
+  conditional_go: "accent",
+  no_go: "danger",
+  unknown: "muted",
+};
+
+/** 원문 unit(예: "백만원·부가세 포함")을 보조 표기로 그대로 노출 — 정규화 값의 근거. */
+function kpiUnit(kpi: BidAnalysisKpi, label: string): string | null {
+  return (kpi.kpi_raw ?? []).find((k) => k.label === label)?.unit ?? null;
+}
+
+/** min/max가 같으면 단일값, 다르면 범위(150~180 MD). 값이 없으면 "-". */
+function fmtRange(min: number | null, max: number | null, suffix: string): string {
+  if (min === null && max === null) return "-";
+  if (min !== null && max !== null && min !== max) return `${min}~${max}${suffix}`;
+  return `${min ?? max}${suffix}`;
+}
+
+/** 독소조항 심각도 분해. 파싱된 항목만 표시(미표기는 생략). */
+function severityText(kpi: BidAnalysisKpi): string | null {
+  const parts = [
+    kpi.toxic_high !== null && `High ${kpi.toxic_high}`,
+    kpi.toxic_mid !== null && `Mid ${kpi.toxic_mid}`,
+    kpi.toxic_low !== null && `Low ${kpi.toxic_low}`,
+  ].filter(Boolean) as string[];
+  return parts.length ? parts.join(" · ") : null;
+}
+
+function KpiTile({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string | null;
+  tone?: "danger";
+}) {
+  return (
+    <div className="rounded-md bg-bg p-3 ring-1 ring-border">
+      <div className="text-xs text-subtle">{label}</div>
+      <div
+        className={`mt-0.5 text-lg font-bold ${tone === "danger" ? "text-danger" : "text-text"}`}
+      >
+        {value}
+      </div>
+      {sub && <div className="mt-0.5 truncate text-[11px] text-subtle" title={sub}>{sub}</div>}
     </div>
   );
 }

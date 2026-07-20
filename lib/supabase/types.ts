@@ -183,6 +183,31 @@ export interface AnalysisReport {
   uploaded_at: string;
 }
 
+/** 1페이지상세요약에서 파싱한 KPI (업로드 시 자동 적재). 정규화 실패 항목은 null + parse_warnings. */
+export interface BidAnalysisKpi {
+  bid_no: string;
+  bid_seq: string;
+  report_id: number | null;
+  source_doc_type: string;
+  audit_budget_krw: number | null;
+  audit_ratio_pct_min: number | null;
+  audit_ratio_pct_max: number | null;
+  effort_md_min: number | null;
+  effort_md_max: number | null;
+  target_budget_krw: number | null;
+  toxic_total: number | null;
+  toxic_high: number | null;
+  toxic_mid: number | null;
+  toxic_low: number | null;
+  go_decision: "go" | "conditional_go" | "no_go" | "unknown" | null;
+  go_reason: string | null;
+  kpi_raw: { label: string; value: string | null; unit: string | null }[] | null;
+  extra_kpis: { label: string; value: string | null; unit: string | null }[] | null;
+  parse_warnings: string[] | null;
+  parser_version: string | null;
+  parsed_at: string | null;
+}
+
 export interface Member {
   member_id: string;
   name: string;
