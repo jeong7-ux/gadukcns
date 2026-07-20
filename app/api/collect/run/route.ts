@@ -22,6 +22,22 @@ function tokenOf(req: NextRequest) {
   return req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? null;
 }
 
+// 백그라운드 실행이 실제로 시작됐는지 확인(runBoundedCollect는 시작 즉시 window_bgn 을 채운다).
+// 시작하지 않으면 호출 측이 인라인으로 대신 수행한다(플랫폼 미실행 대비 자기치유).
+async function waitForStart(
+  svc: ReturnType<typeof serviceClient>,
+  runId: number,
+  timeoutMs: number
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 500));
+    const { data } = await svc.from("collect_runs").select("window_bgn").eq("id", runId).maybeSingle();
+    if (data?.window_bgn) return true;
+  }
+  return false;
+}
+
 // 자기 자신(같은 사이트)의 백그라운드 함수 URL. 프록시 헤더 우선 → Netlify 사이트 URL → 요청 URL.
 function siteOrigin(req: NextRequest): string {
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
@@ -125,11 +141,15 @@ export async function POST(req: NextRequest) {
     dispatchNote = (e as Error).message;
   }
 
-  if (dispatched) {
+  // 백그라운드 함수는 즉시 202를 돌려주므로 "접수됨"이 곧 "실행됨"은 아니다.
+  //   실제 시작 여부는 runBoundedCollect가 시작 시 채우는 window_bgn 으로 확인한다.
+  if (dispatched && (await waitForStart(svc, runId, 5000))) {
     return NextResponse.json({ ok: true, mode: "background", runId }, { status: 202 });
   }
 
-  // ③ 폴백(로컬 dev 등 백그라운드 함수 부재): 선생성한 행을 그대로 사용해 인라인 실행
+  // ③ 폴백: 백그라운드 함수 부재(로컬 dev)·미실행 시 같은 행으로 인라인 실행.
+  //   뒤늦게 깨어난 백그라운드가 중복 실행하지 않도록 source 마커로 선점한다.
+  await svc.from("collect_runs").update({ source: "nara-inline" }).eq("id", runId);
   try {
     const result = await runBoundedCollect(svc, { runId, days, maxPages, triggeredBy: me.userId });
     return NextResponse.json({ ok: true, mode: "inline", runId, result, dispatchNote });

@@ -43,10 +43,12 @@ export default async (req: Request): Promise<Response> => {
   // 재시도·재사용 가드: 대상 행이 아직 running 이고 최근(15분 내) 생성된 것만 실행한다.
   const { data: run } = await sb
     .from("collect_runs")
-    .select("id,status,started_at")
+    .select("id,status,source,started_at")
     .eq("id", runId)
     .maybeSingle();
   if (!run || run.status !== "running") return new Response("Not runnable", { status: 409 });
+  // 라우트가 인라인으로 선점한 실행(source='nara-inline')은 건너뛴다(중복 수집 방지)
+  if (run.source !== "nara") return new Response("Claimed by inline run", { status: 409 });
   if (Date.now() - new Date(run.started_at as string).getTime() > 15 * 60 * 1000) {
     return new Response("Stale", { status: 409 });
   }
