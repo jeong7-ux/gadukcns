@@ -8,7 +8,7 @@
 // 보호: collect-background 와 동일한 HMAC 토큰(x-collect-token) 필수 → 서비스 키를
 //   가진 서버·운영자만 호출 가능. 값은 절대 반환하지 않고 존재 여부(boolean)만 알린다.
 // =====================================================================
-import { createClient } from "@supabase/supabase-js";
+import { collectServiceClient } from "../../lib/collect/service-client";
 import { COLLECT_TOKEN_HEADER, verifyCollectRunToken } from "../../lib/collect/trigger-token";
 
 export default async (req: Request): Promise<Response> => {
@@ -30,9 +30,7 @@ export default async (req: Request): Promise<Response> => {
   }
 
   try {
-    const sb = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_KEY!, {
-      auth: { persistSession: false },
-    });
+    const sb = collectServiceClient();
     const { data, error } = await sb
       .from("collect_runs")
       .select("id,status,source,started_at")

@@ -14,7 +14,7 @@
 // 인증: x-collect-token = HMAC(SUPABASE_SERVICE_KEY, "collect-run:<runId>") — 서버끼리만 생성 가능.
 // 주의: 예외를 밖으로 던지면 Netlify가 1분·2분 뒤 재시도하므로(중복 수집) 반드시 내부에서 처리한다.
 // =====================================================================
-import { createClient } from "@supabase/supabase-js";
+import { collectServiceClient } from "../../lib/collect/service-client";
 import { runBoundedCollect } from "../../lib/collect/runner";
 import { COLLECT_TOKEN_HEADER, verifyCollectRunToken } from "../../lib/collect/trigger-token";
 
@@ -35,10 +35,12 @@ export default async (req: Request): Promise<Response> => {
     return new Response("Forbidden", { status: 403 });
   }
 
-  const url = process.env.SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_KEY;
-  if (!url || !serviceKey) return new Response("Server env missing", { status: 500 });
-  const sb = createClient(url, serviceKey, { auth: { persistSession: false } });
+  let sb;
+  try {
+    sb = collectServiceClient();
+  } catch {
+    return new Response("Server env missing", { status: 500 });
+  }
 
   // 재시도·재사용 가드: 대상 행이 아직 running 이고 최근(15분 내) 생성된 것만 실행한다.
   const { data: run } = await sb

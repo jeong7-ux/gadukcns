@@ -143,13 +143,22 @@ export async function POST(req: NextRequest) {
 
   // 백그라운드 함수는 즉시 202를 돌려주므로 "접수됨"이 곧 "실행됨"은 아니다.
   //   실제 시작 여부는 runBoundedCollect가 시작 시 채우는 window_bgn 으로 확인한다.
-  if (dispatched && (await waitForStart(svc, runId, 5000))) {
+  if (dispatched && (await waitForStart(svc, runId, 8000))) {
     return NextResponse.json({ ok: true, mode: "background", runId }, { status: 202 });
   }
 
   // ③ 폴백: 백그라운드 함수 부재(로컬 dev)·미실행 시 같은 행으로 인라인 실행.
-  //   뒤늦게 깨어난 백그라운드가 중복 실행하지 않도록 source 마커로 선점한다.
-  await svc.from("collect_runs").update({ source: "nara-inline" }).eq("id", runId);
+  //   아직 시작 전(window_bgn is null)일 때만 source 마커로 선점 → 콜드스타트로 늦게
+  //   깨어난 백그라운드와의 중복 실행을 막는다(선점 실패 = 백그라운드가 이미 시작).
+  const { data: claimed } = await svc
+    .from("collect_runs")
+    .update({ source: "nara-inline" })
+    .eq("id", runId)
+    .is("window_bgn", null)
+    .select("id");
+  if (!claimed?.length) {
+    return NextResponse.json({ ok: true, mode: "background", runId }, { status: 202 });
+  }
   try {
     const result = await runBoundedCollect(svc, { runId, days, maxPages, triggeredBy: me.userId });
     return NextResponse.json({ ok: true, mode: "inline", runId, result, dispatchNote });
