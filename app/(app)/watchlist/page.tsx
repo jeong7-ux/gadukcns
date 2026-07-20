@@ -15,8 +15,10 @@ import { AnalysisModal } from "@/components/watch/AnalysisModal";
 import { InfoCells, InfoHeaders, eok, statusLabel } from "@/components/bids/InfoRowCells";
 import { requestAnalysis } from "@/lib/queries/analysis";
 import { daysUntil, ddayInfo, DDAY_PILL_CLASS } from "@/lib/design/dday";
-import { fmtDate } from "@/lib/utils/format";
-import type { WatchItem } from "@/lib/supabase/types";
+import { fmtDate, fmtWon } from "@/lib/utils/format";
+import { GO_LABEL, GO_TONE, fmtRange } from "@/lib/analysis/kpi-format";
+import { Pill } from "@/components/ui/Pill";
+import type { WatchItem, BidAnalysisKpi } from "@/lib/supabase/types";
 
 const norm = (s: string | null) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -44,6 +46,8 @@ interface WatchRow extends WatchItem {
   est_price: number | null;
   needs_review: boolean;
   demand_client: string | null;
+  /** 1페이지상세요약 파싱 KPI(업로드된 공고만). 진행단계 열에 요약 표시. */
+  kpi: BidAnalysisKpi | null;
 }
 
 function WatchlistInner() {
@@ -78,6 +82,7 @@ function WatchlistInner() {
       const bidNos = [...new Set(wl.map((w) => w.bid_no))];
       type BJoin = { bid_no: string; bid_seq: string; title: string | null; order_org: string | null; demand_org: string | null; est_price: number | null; classify: { needs_review?: boolean } | null };
       const map = new Map<string, BJoin>();
+      const kpiMap = new Map<string, BidAnalysisKpi>();
       let clients: { name: string; keys: string[] }[] = [];
       if (bidNos.length > 0) {
         const { data: bids } = await supabase
@@ -85,6 +90,12 @@ function WatchlistInner() {
           .select("bid_no,bid_seq,title,order_org,demand_org,est_price,classify")
           .in("bid_no", bidNos);
         for (const b of (bids as BJoin[]) ?? []) map.set(`${b.bid_no}|${b.bid_seq}`, b);
+        // 분석 KPI(있는 공고만) — 테이블 미배포 환경에서도 목록이 죽지 않도록 오류는 무시.
+        const { data: kpis } = await supabase
+          .from("bid_analysis_kpi")
+          .select("*")
+          .in("bid_no", bidNos);
+        for (const k of (kpis as BidAnalysisKpi[]) ?? []) kpiMap.set(`${k.bid_no}|${k.bid_seq}`, k);
         // 고객사(수요기관 ⭐) 매칭용
         const { data: cl } = await supabase.from("clients").select("name,aliases").eq("is_priority", true).eq("status", "active");
         clients = ((cl as { name: string; aliases: string[] | null }[]) ?? []).map((c) => ({
@@ -108,6 +119,7 @@ function WatchlistInner() {
             est_price: b?.est_price ?? null,
             needs_review: !!b?.classify?.needs_review,
             demand_client: matchOrgClient(b?.demand_org ?? null),
+            kpi: kpiMap.get(`${w.bid_no}|${w.bid_seq}`) ?? null,
           };
         })
         // S-07은 마감된 사업도 관리 차원에서 표시(다른 화면과 달리 숨기지 않음).
@@ -279,7 +291,47 @@ function StageActions({ w, isAdmin, onRequest, onCancel, onOpenModal }: StageAct
           </button>
         </div>
       )}
+      <KpiSummary kpi={w.kpi} />
     </>
+  );
+}
+
+/**
+ * 진행단계 열의 KPI 요약 — 1페이지상세요약이 올라온 공고만 표시.
+ * 파일마다 라벨 구성이 달라(감리예산 vs 사업금액 등) 값이 있는 항목만 칩으로 노출한다.
+ */
+function KpiSummary({ kpi }: { kpi: BidAnalysisKpi | null }) {
+  if (!kpi) return null;
+  const ratio = fmtRange(kpi.audit_ratio_pct_min, kpi.audit_ratio_pct_max, "%");
+  const md = fmtRange(kpi.effort_md_min, kpi.effort_md_max, "MD");
+  const chips: string[] = [];
+  if (kpi.audit_budget_krw !== null) chips.push(`예산 ${fmtWon(kpi.audit_budget_krw)}`);
+  if (ratio) chips.push(`비율 ${ratio}`);
+  if (md) chips.push(`공수 ${md}`);
+  if (kpi.target_budget_krw !== null) chips.push(`대상 ${fmtWon(kpi.target_budget_krw)}`);
+  if (kpi.go_decision === null && chips.length === 0 && kpi.toxic_total === null) return null;
+
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[11px]">
+      {kpi.go_decision && (
+        <Pill tone={GO_TONE[kpi.go_decision]}>{GO_LABEL[kpi.go_decision]}</Pill>
+      )}
+      {kpi.toxic_total !== null && kpi.toxic_total > 0 && (
+        <span className="rounded bg-danger/10 px-1.5 py-0.5 font-medium text-danger ring-1 ring-danger/30">
+          독소 {kpi.toxic_total}건
+        </span>
+      )}
+      {chips.map((c) => (
+        <span key={c} className="rounded bg-bg px-1.5 py-0.5 text-subtle ring-1 ring-border">
+          {c}
+        </span>
+      ))}
+      {kpi.go_reason && (
+        <span className="w-full truncate text-[11px] text-subtle" title={kpi.go_reason}>
+          {kpi.go_reason}
+        </span>
+      )}
+    </div>
   );
 }
 

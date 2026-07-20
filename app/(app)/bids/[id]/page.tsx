@@ -23,6 +23,14 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { WatchToggle } from "@/components/bids/WatchToggle";
 import { deriveStatus } from "@/lib/design/dday";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/utils/format";
+import {
+  GO_LABEL,
+  GO_TONE,
+  fmtRange,
+  hasLabel,
+  kpiUnit,
+  severityText,
+} from "@/lib/analysis/kpi-format";
 
 const BID_COLS =
   "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,raw,updated_at";
@@ -194,9 +202,11 @@ export default function BidDetailPage() {
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_360px]">
         <div className="space-y-4">
-          {/* 분석 KPI — 1페이지상세요약 파싱 결과(있을 때만) */}
+          {/* 분석 KPI — 1페이지상세요약 파싱 결과(있을 때만).
+              다른 보드와 구분되도록 강조 틴트(bg-priority, BidCard와 동일 관용구) 적용. */}
           {kpi && (
-            <Card>
+            <div className="rounded-card border border-accent bg-priority shadow-card">
+              {/* 투명도 수정자(accent/40)는 토큰이 var() 색이라 적용되지 않으므로 실색상 사용 */}
               <CardHeader
                 title={
                   <span className="flex flex-wrap items-center gap-2">
@@ -215,33 +225,45 @@ export default function BidDetailPage() {
                 }
               />
               <div className="p-4">
+                {/* 고정 타일은 원문에 그 라벨이 있을 때만 — 파일마다 라벨이 달라(사업금액·배점구조 등)
+                    없는 항목을 "-"로 비워두지 않고 숨긴다. 실제 값은 아래 가변 슬롯에 표시된다. */}
                 <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-                  <KpiTile
-                    label="감리예산"
-                    value={fmtWon(kpi.audit_budget_krw)}
-                    sub={kpiUnit(kpi, "감리예산")}
-                  />
-                  <KpiTile
-                    label="감리비율"
-                    value={fmtRange(kpi.audit_ratio_pct_min, kpi.audit_ratio_pct_max, "%")}
-                    sub={kpiUnit(kpi, "감리비율")}
-                  />
-                  <KpiTile
-                    label="투입공수"
-                    value={fmtRange(kpi.effort_md_min, kpi.effort_md_max, " MD")}
-                    sub={kpiUnit(kpi, "투입공수")}
-                  />
-                  <KpiTile
-                    label="대상사업"
-                    value={fmtWon(kpi.target_budget_krw)}
-                    sub={kpiUnit(kpi, "대상사업")}
-                  />
-                  <KpiTile
-                    label="독소조항"
-                    value={kpi.toxic_total !== null ? `${kpi.toxic_total}건` : "-"}
-                    sub={severityText(kpi) ?? kpiUnit(kpi, "독소조항")}
-                    tone={kpi.toxic_total && kpi.toxic_total > 0 ? "danger" : undefined}
-                  />
+                  {hasLabel(kpi, "감리예산") && (
+                    <KpiTile
+                      label="감리예산"
+                      value={fmtWon(kpi.audit_budget_krw)}
+                      sub={kpiUnit(kpi, "감리예산")}
+                    />
+                  )}
+                  {hasLabel(kpi, "감리비율") && (
+                    <KpiTile
+                      label="감리비율"
+                      value={fmtRange(kpi.audit_ratio_pct_min, kpi.audit_ratio_pct_max, "%") ?? "-"}
+                      sub={kpiUnit(kpi, "감리비율")}
+                    />
+                  )}
+                  {hasLabel(kpi, "투입공수") && (
+                    <KpiTile
+                      label="투입공수"
+                      value={fmtRange(kpi.effort_md_min, kpi.effort_md_max, " MD") ?? "-"}
+                      sub={kpiUnit(kpi, "투입공수")}
+                    />
+                  )}
+                  {hasLabel(kpi, "대상사업") && (
+                    <KpiTile
+                      label="대상사업"
+                      value={fmtWon(kpi.target_budget_krw)}
+                      sub={kpiUnit(kpi, "대상사업")}
+                    />
+                  )}
+                  {hasLabel(kpi, "독소조항") && (
+                    <KpiTile
+                      label="독소조항"
+                      value={kpi.toxic_total !== null ? `${kpi.toxic_total}건` : "-"}
+                      sub={severityText(kpi) ?? kpiUnit(kpi, "독소조항")}
+                      tone={kpi.toxic_total && kpi.toxic_total > 0 ? "danger" : undefined}
+                    />
+                  )}
                   {/* 라벨이 가변인 슬롯(요구사항·MD단가 등)은 원문 그대로 노출 */}
                   {(kpi.extra_kpis ?? []).map((e) => (
                     <KpiTile
@@ -253,7 +275,7 @@ export default function BidDetailPage() {
                   ))}
                 </div>
                 {(kpi.parse_warnings?.length ?? 0) > 0 && (
-                  <ul className="mt-3 space-y-1 rounded-md bg-bg p-2.5 ring-1 ring-border">
+                  <ul className="mt-3 space-y-1 rounded-md bg-surface p-2.5 ring-1 ring-border">
                     {kpi.parse_warnings!.map((w, i) => (
                       <li key={i} className="text-xs text-subtle">
                         ⚠ {w}
@@ -267,7 +289,7 @@ export default function BidDetailPage() {
                   {kpi.parser_version && ` · ${kpi.parser_version}`}
                 </p>
               </div>
-            </Card>
+            </div>
           )}
 
           {/* AI 브리핑 카드 */}
@@ -553,41 +575,6 @@ function Meta({ label, value }: { label: string; value: string }) {
 
 /* ── 분석 KPI 표시 헬퍼 ─────────────────────────────────────────── */
 
-const GO_LABEL: Record<string, string> = {
-  go: "GO",
-  conditional_go: "조건부 GO",
-  no_go: "NO-GO",
-  unknown: "판정 미상",
-};
-const GO_TONE: Record<string, "success" | "accent" | "danger" | "muted"> = {
-  go: "success",
-  conditional_go: "accent",
-  no_go: "danger",
-  unknown: "muted",
-};
-
-/** 원문 unit(예: "백만원·부가세 포함")을 보조 표기로 그대로 노출 — 정규화 값의 근거. */
-function kpiUnit(kpi: BidAnalysisKpi, label: string): string | null {
-  return (kpi.kpi_raw ?? []).find((k) => k.label === label)?.unit ?? null;
-}
-
-/** min/max가 같으면 단일값, 다르면 범위(150~180 MD). 값이 없으면 "-". */
-function fmtRange(min: number | null, max: number | null, suffix: string): string {
-  if (min === null && max === null) return "-";
-  if (min !== null && max !== null && min !== max) return `${min}~${max}${suffix}`;
-  return `${min ?? max}${suffix}`;
-}
-
-/** 독소조항 심각도 분해. 파싱된 항목만 표시(미표기는 생략). */
-function severityText(kpi: BidAnalysisKpi): string | null {
-  const parts = [
-    kpi.toxic_high !== null && `High ${kpi.toxic_high}`,
-    kpi.toxic_mid !== null && `Mid ${kpi.toxic_mid}`,
-    kpi.toxic_low !== null && `Low ${kpi.toxic_low}`,
-  ].filter(Boolean) as string[];
-  return parts.length ? parts.join(" · ") : null;
-}
-
 function KpiTile({
   label,
   value,
@@ -600,7 +587,7 @@ function KpiTile({
   tone?: "danger";
 }) {
   return (
-    <div className="rounded-md bg-bg p-3 ring-1 ring-border">
+    <div className="rounded-md bg-surface p-3 ring-1 ring-border">
       <div className="text-xs text-subtle">{label}</div>
       <div
         className={`mt-0.5 text-lg font-bold ${tone === "danger" ? "text-danger" : "text-text"}`}
