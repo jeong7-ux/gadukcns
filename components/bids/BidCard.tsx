@@ -2,10 +2,13 @@ import Link from "next/link";
 import type { Bid } from "@/lib/supabase/types";
 import { DdayPill } from "@/components/ui/DdayPill";
 import { fmtDate, fmtWon } from "@/lib/utils/format";
+import { deadlineView } from "@/lib/queries/deadline";
 
 /** S-04 입찰 카드: 공고명·기관·마감·점수·상태 pill·D-day. 고객사 공고는 강조(FR-18) */
 export function BidCard({ bid }: { bid: Bid }) {
   const isClient = !!bid.client_name;
+  // 마감일이 없는 공고(협상계약류)는 개찰일을 라벨과 함께 병기
+  const dl = deadlineView(bid);
   return (
     <Link
       href={`/bids/${encodeURIComponent(bid.bid_no)}`}
@@ -27,7 +30,7 @@ export function BidCard({ bid }: { bid: Bid }) {
           {bid.title ?? "(제목 없음)"}
         </h3>
         <div className="flex shrink-0 flex-col items-end gap-1">
-          {bid.deadline_dt && <DdayPill deadline={bid.deadline_dt} />}
+          {dl.dt && <DdayPill deadline={dl.dt} />}
         </div>
       </div>
 
@@ -43,10 +46,17 @@ export function BidCard({ bid }: { bid: Bid }) {
           <span className="rounded bg-bg px-1 text-[10px] text-subtle ring-1 ring-border">공고일</span>
           <span className="text-text">{bid.notice_dt ? fmtDate(bid.notice_dt) : "-"}</span>
         </span>
-        {bid.deadline_dt && (
+        {dl.dt && (
           <span className="flex items-center gap-1">
-            <span className="rounded bg-dday-urgent/10 px-1 text-[10px] text-dday-urgent">마감일</span>
-            <span className="text-text">{fmtDate(bid.deadline_dt)}</span>
+            <span
+              className={`rounded px-1 text-[10px] ${
+                dl.isOpen ? "bg-primary/10 text-primary" : "bg-dday-urgent/10 text-dday-urgent"
+              }`}
+              title={dl.isOpen ? "입찰마감일시가 없는 공고(협상계약 등) — 개찰일시 기준" : undefined}
+            >
+              {dl.label}일
+            </span>
+            <span className="text-text">{fmtDate(dl.dt)}</span>
           </span>
         )}
       </div>

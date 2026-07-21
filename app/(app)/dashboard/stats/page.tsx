@@ -25,6 +25,7 @@ import { getSupabaseClient } from "@/lib/supabase/client";
 import { useSession } from "@/lib/auth/SessionProvider";
 import { has, CAN_WATCH_WRITE } from "@/lib/auth/roles";
 import { fetchDashboardData, type DashBid, type DashboardData } from "@/lib/queries/stats";
+import { effectiveDeadline } from "@/lib/queries/deadline";
 import { useRealtimeInvalidate } from "@/lib/hooks/useRealtimeInvalidate";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -285,6 +286,7 @@ function FeedTable({ rows }: { rows: Row[] }) {
                     demandOrg={b.demand_org}
                     noticeDt={b.notice_dt}
                     deadlineDt={b.deadline_dt}
+                    openDt={b.open_dt}
                     estPrice={b.est_price}
                     needsReview={b.needs_review}
                     demandClient={b.demandClient}
@@ -386,7 +388,8 @@ function compute(d: DashboardData) {
   };
 
   const rows: Row[] = d.bids.map((b) => {
-    const info = ddayInfo(b.deadline_dt);
+    // 마감일이 없는 공고(협상계약류)는 개찰일 기준 — 목록 노출 필터(notClosedOr)와 동일 기준
+    const info = ddayInfo(effectiveDeadline(b));
     return {
       ...b,
       clientName: matchClient(b),

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { fmtDate } from "@/lib/utils/format";
 import { ddayInfo, DDAY_PILL_CLASS } from "@/lib/design/dday";
+import { deadlineView } from "@/lib/queries/deadline";
 
 // S-10 입찰 정보 목록 / S-07 관심 목록 공용 행 셀.
 //   순서: 상세 · 일정정보 · 기관정보 · 금액 · 사업명 · 공고번호
@@ -11,6 +12,8 @@ export interface InfoCellProps {
   demandOrg: string | null;
   noticeDt: string | null;
   deadlineDt: string | null;
+  /** 개찰일시. 마감일이 없는 공고(협상계약류)의 표시·D-day 근거로 쓴다. */
+  openDt?: string | null;
   estPrice: number | null;
   needsReview?: boolean;
   demandClient?: string | null; // 수요기관이 고객사면 그 이름(⭐·깜빡임)
@@ -49,7 +52,9 @@ export function InfoHeaders({ hideStatus }: { hideStatus?: boolean } = {}) {
 
 /** 목록 셀 6열 (tbody > tr 안에서 사용) */
 export function InfoCells(p: InfoCellProps) {
-  const info = ddayInfo(p.deadlineDt);
+  // 마감일이 없으면 개찰일을 기준으로(라벨도 '개찰'로 바꿔 근거 병기)
+  const dl = deadlineView({ deadline_dt: p.deadlineDt, open_dt: p.openDt });
+  const info = ddayInfo(dl.dt);
   return (
     <>
       {/* 상세 */}
@@ -72,8 +77,15 @@ export function InfoCells(p: InfoCellProps) {
             <span className="text-text">{p.noticeDt ? fmtDate(p.noticeDt) : "-"}</span>
           </span>
           <span className="flex items-center gap-1">
-            <span className="rounded bg-dday-urgent/10 px-1 text-[10px] text-dday-urgent">마감</span>
-            <span className="text-text">{p.deadlineDt ? fmtDate(p.deadlineDt) : "미정"}</span>
+            <span
+              className={`rounded px-1 text-[10px] ${
+                dl.isOpen ? "bg-primary/10 text-primary" : "bg-dday-urgent/10 text-dday-urgent"
+              }`}
+              title={dl.isOpen ? "입찰마감일시가 없는 공고(협상계약 등) — 개찰일시 기준" : undefined}
+            >
+              {dl.label}
+            </span>
+            <span className="text-text">{dl.dt ? fmtDate(dl.dt) : "미정"}</span>
           </span>
         </div>
       </td>

@@ -15,6 +15,7 @@ import { AnalysisModal } from "@/components/watch/AnalysisModal";
 import { InfoCells, InfoHeaders, eok, statusLabel } from "@/components/bids/InfoRowCells";
 import { requestAnalysis } from "@/lib/queries/analysis";
 import { daysUntil, ddayInfo, DDAY_PILL_CLASS } from "@/lib/design/dday";
+import { effectiveDeadline, deadlineView } from "@/lib/queries/deadline";
 import { fmtDate, fmtWon } from "@/lib/utils/format";
 import { GO_LABEL, GO_TONE, fmtRange } from "@/lib/analysis/kpi-format";
 import { Pill } from "@/components/ui/Pill";
@@ -44,6 +45,7 @@ interface WatchRow extends WatchItem {
   order_org: string | null;
   demand_org: string | null;
   est_price: number | null;
+  open_dt: string | null; // 개찰일시(bids 조인) — 마감일 없는 공고의 표시·정렬 근거
   needs_review: boolean;
   demand_client: string | null;
   /** 1페이지상세요약 파싱 KPI(업로드된 공고만). 진행단계 열에 요약 표시. */
@@ -80,14 +82,14 @@ function WatchlistInner() {
       const wl = (data as WatchItem[]) ?? [];
       // bids 상세(발주/수요기관·사업명·금액·분류) 조인 (S-10 입찰 정보 목록과 동일 항목)
       const bidNos = [...new Set(wl.map((w) => w.bid_no))];
-      type BJoin = { bid_no: string; bid_seq: string; title: string | null; order_org: string | null; demand_org: string | null; est_price: number | null; classify: { needs_review?: boolean } | null };
+      type BJoin = { bid_no: string; bid_seq: string; title: string | null; order_org: string | null; demand_org: string | null; est_price: number | null; open_dt: string | null; classify: { needs_review?: boolean } | null };
       const map = new Map<string, BJoin>();
       const kpiMap = new Map<string, BidAnalysisKpi>();
       let clients: { name: string; keys: string[] }[] = [];
       if (bidNos.length > 0) {
         const { data: bids } = await supabase
           .from("bids")
-          .select("bid_no,bid_seq,title,order_org,demand_org,est_price,classify")
+          .select("bid_no,bid_seq,title,order_org,demand_org,est_price,open_dt,classify")
           .in("bid_no", bidNos);
         for (const b of (bids as BJoin[]) ?? []) map.set(`${b.bid_no}|${b.bid_seq}`, b);
         // 분석 KPI(있는 공고만) — 테이블 미배포 환경에서도 목록이 죽지 않도록 오류는 무시.
@@ -117,6 +119,8 @@ function WatchlistInner() {
             order_org: b?.order_org ?? null,
             demand_org: b?.demand_org ?? null,
             est_price: b?.est_price ?? null,
+            // watchlist에는 개찰일이 없으므로 bids 조인값 사용(마감일 없는 공고 표시·정렬 근거)
+            open_dt: b?.open_dt ?? null,
             needs_review: !!b?.classify?.needs_review,
             demand_client: matchOrgClient(b?.demand_org ?? null),
             kpi: kpiMap.get(`${w.bid_no}|${w.bid_seq}`) ?? null,
@@ -125,8 +129,8 @@ function WatchlistInner() {
         // S-07은 마감된 사업도 관리 차원에서 표시(다른 화면과 달리 숨기지 않음).
         //   정렬: 진행중(D-day 임박순) 먼저 → 마감된 건 뒤로(최근 마감 우선).
         .sort((a, b) => {
-          const da = daysUntil(a.deadline_dt);
-          const db = daysUntil(b.deadline_dt);
+          const da = daysUntil(effectiveDeadline(a));
+          const db = daysUntil(effectiveDeadline(b));
           const ac = da !== null && da < 0;
           const bc = db !== null && db < 0;
           if (ac !== bc) return ac ? 1 : -1; // 마감된 건 뒤로
@@ -169,7 +173,7 @@ function WatchlistInner() {
               </thead>
               <tbody className="divide-y divide-border">
                 {q.data!.map((w) => {
-                  const closed = (daysUntil(w.deadline_dt) ?? 0) < 0; // 마감 지남
+                  const closed = (daysUntil(effectiveDeadline(w)) ?? 0) < 0; // 마감 지남
                   return (
                     <tr key={`${w.bid_no}-${w.bid_seq}`} className={`align-top hover:bg-bg ${closed ? "opacity-60" : ""}`}>
                       {/* S-10 입찰 정보 목록과 동일 6열: 상세·일정정보·기관정보·금액·사업명·공고번호 */}
@@ -181,6 +185,7 @@ function WatchlistInner() {
                         demandOrg={w.demand_org}
                         noticeDt={w.notice_dt}
                         deadlineDt={w.deadline_dt}
+                        openDt={w.open_dt}
                         estPrice={w.est_price}
                         needsReview={w.needs_review}
                         demandClient={w.demand_client}
@@ -364,8 +369,9 @@ interface WatchCardProps extends StageActionsProps {
 
 /** 모바일·태블릿(lg 미만) 카드 — 테이블 6열과 동일 정보 리플로우. */
 function WatchCard({ w, isAdmin, onRequest, onCancel, onOpenModal, onDecision }: WatchCardProps) {
-  const info = ddayInfo(w.deadline_dt);
-  const closed = (daysUntil(w.deadline_dt) ?? 0) < 0; // 마감 지남
+  const dl = deadlineView(w);
+  const info = ddayInfo(dl.dt);
+  const closed = (daysUntil(dl.dt) ?? 0) < 0; // 마감 지남
   const pillText =
     info.days === null ? statusLabel(info.days) : `${statusLabel(info.days)} · ${info.label}`;
 
@@ -420,10 +426,17 @@ function WatchCard({ w, isAdmin, onRequest, onCancel, onOpenModal, onDecision }:
           <span className="shrink-0 rounded bg-bg px-1 text-[10px] text-subtle ring-1 ring-border">공개</span>
           <span className="text-text">{w.notice_dt ? fmtDate(w.notice_dt) : "-"}</span>
         </div>
-        {/* 마감일 */}
+        {/* 마감일 — 없으면 개찰일 병기(라벨로 근거 표시) */}
         <div className="flex items-center gap-1">
-          <span className="shrink-0 rounded bg-dday-urgent/10 px-1 text-[10px] text-dday-urgent">마감</span>
-          <span className="text-text">{w.deadline_dt ? fmtDate(w.deadline_dt) : "미정"}</span>
+          <span
+            className={`shrink-0 rounded px-1 text-[10px] ${
+              dl.isOpen ? "bg-primary/10 text-primary" : "bg-dday-urgent/10 text-dday-urgent"
+            }`}
+            title={dl.isOpen ? "입찰마감일시가 없는 공고(협상계약 등) — 개찰일시 기준" : undefined}
+          >
+            {dl.label}
+          </span>
+          <span className="text-text">{dl.dt ? fmtDate(dl.dt) : "미정"}</span>
         </div>
         {/* 금액 */}
         <div className="flex items-center gap-1">

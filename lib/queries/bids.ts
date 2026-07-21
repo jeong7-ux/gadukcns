@@ -3,7 +3,7 @@ import type { Bid, KeywordGroup } from "@/lib/supabase/types";
 import type { BidFilters } from "@/components/bids/FilterBar";
 import { coreScore } from "@/lib/queries/score";
 import { keepLatestSeq, collapseRebids } from "@/lib/queries/dedupe";
-import { notClosedOr } from "@/lib/queries/deadline";
+import { notClosedOr, effectiveDeadline } from "@/lib/queries/deadline";
 
 const BID_COLS =
   "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,biz_category,updated_at";
@@ -118,9 +118,9 @@ export async function fetchBids(
     const ca = a.client_name ? 1 : 0;
     const cb = b.client_name ? 1 : 0;
     if (cb !== ca) return cb - ca; // ① 고객사 우선
-    // ② 마감일 임박순 — 마감일 미정(null)은 맨 뒤로
-    const da = a.deadline_dt ?? "9999-12-31";
-    const db = b.deadline_dt ?? "9999-12-31";
+    // ② 마감일 임박순 — 마감일이 없으면 개찰일 기준, 둘 다 없으면 맨 뒤로
+    const da = effectiveDeadline(a) ?? "9999-12-31";
+    const db = effectiveDeadline(b) ?? "9999-12-31";
     return da.localeCompare(db);
   });
 

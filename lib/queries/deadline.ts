@@ -26,3 +26,17 @@ export function effectiveDeadline(b: {
 }): string | null {
   return b.deadline_dt ?? b.open_dt ?? null;
 }
+
+/**
+ * 표시용 — 유효 마감과 **그 출처 라벨**.
+ * 마감일이 없어 개찰일로 대체할 때는 `개찰`로 라벨을 바꿔 **근거를 병기**한다
+ * (마감일인 척 하지 않는다). 둘 다 없으면 `dt: null` → 화면은 "미정".
+ */
+export function deadlineView(b: { deadline_dt?: string | null; open_dt?: string | null }): {
+  dt: string | null;
+  label: "마감" | "개찰";
+  isOpen: boolean;
+} {
+  const isOpen = !b.deadline_dt && !!b.open_dt;
+  return { dt: b.deadline_dt ?? b.open_dt ?? null, label: isOpen ? "개찰" : "마감", isOpen };
+}

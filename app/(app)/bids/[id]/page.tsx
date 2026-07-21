@@ -22,6 +22,7 @@ import { Markdown } from "@/components/ui/Markdown";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { WatchToggle } from "@/components/bids/WatchToggle";
 import { deriveStatus } from "@/lib/design/dday";
+import { effectiveDeadline } from "@/lib/queries/deadline";
 import { fmtDate, fmtDateTime, fmtWon } from "@/lib/utils/format";
 import {
   GO_LABEL,
@@ -184,9 +185,10 @@ export default function BidDetailPage() {
       {/* 메타 + D-day/상태 */}
       <Card className="mb-4 p-4">
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          {/* 상태 pill: deadline_dt에서 실시간 파생(우선), 서버 status는 폴백 */}
-          <StatusPill status={deriveStatus(bid.deadline_dt) ?? bid.status} />
-          <DdayPill deadline={bid.deadline_dt} />
+          {/* 상태·D-day: 마감일시가 없는 공고(협상계약류)는 개찰일시 기준 — 목록과 동일 기준.
+              원값은 아래 '마감일시/개찰일시' 메타에 그대로 표시된다. */}
+          <StatusPill status={deriveStatus(effectiveDeadline(bid)) ?? bid.status} />
+          <DdayPill deadline={effectiveDeadline(bid)} />
           <Pill tone="primary">점수 {bid.score}</Pill>
           {bid.ai_score !== null && <Pill tone="accent">AI {bid.ai_score}</Pill>}
         </div>

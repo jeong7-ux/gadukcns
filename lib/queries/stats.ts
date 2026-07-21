@@ -27,6 +27,7 @@ export interface DashBid {
   status: string | null;
   notice_dt: string | null;
   deadline_dt: string | null;
+  open_dt: string | null; // 개찰일시 — 마감일 없는 공고(협상계약류)의 마감 판정·표시 근거
   est_price: number | null;
   score: number;
   coreScore: number; // 주력사업 점수 = score_breakdown.base − exclude (발주/고객사 가산 제외)
@@ -80,7 +81,7 @@ export async function fetchDashboardData(
     supabase
       .from("bids")
       .select(
-        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,est_price,score,ai_score,ai_summary,tags,ai_flags,biz_category,classify"
+        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,open_dt,est_price,score,ai_score,ai_summary,tags,ai_flags,biz_category,classify"
       )
       .is("archived_at", null)
       .or(notClosed) // 마감된 사업 제외
@@ -132,6 +133,7 @@ export async function fetchDashboardData(
     status: (b.status as string) ?? null,
     notice_dt: (b.notice_dt as string) ?? null,
     deadline_dt: (b.deadline_dt as string) ?? null,
+    open_dt: (b.open_dt as string) ?? null,
     est_price: (b.est_price as number) ?? null,
     score: (b.score as number) ?? 0,
     // 주력사업 점수 = base − exclude. breakdown 없으면 총점 폴백 (lib/queries/score.ts 공유 헬퍼)
