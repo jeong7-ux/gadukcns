@@ -50,6 +50,5 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          GOOGLE_AI_API_KEY: ${{ secrets.GOOGLE_AI_API_KEY }}   # 요약/브리핑(Gemini)
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}  # 임베딩(bge-m3) 전용
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           APP_MASTER_KEY: ${{ secrets.APP_MASTER_KEY }}

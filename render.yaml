@@ -31,9 +31,7 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: GOOGLE_AI_API_KEY   # Google AI Studio(Gemini) — 분류·요약
-        sync: false
-      - key: OPENROUTER_API_KEY  # 임베딩(bge-m3) 전용 — scripts/ai.mjs
+      - key: OPENROUTER_API_KEY
         sync: false
       - key: HMAC_KEY
         sync: false
@@ -54,8 +52,6 @@ services:
 #      - key: SUPABASE_URL
 #        sync: false
 #      - key: SUPABASE_SERVICE_KEY
-#        sync: false
-#      - key: GOOGLE_AI_API_KEY
 #        sync: false
 #      - key: OPENROUTER_API_KEY
 #        sync: false

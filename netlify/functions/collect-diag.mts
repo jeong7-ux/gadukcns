@@ -18,7 +18,7 @@ export default async (req: Request): Promise<Response> => {
     SUPABASE_URL: !!process.env.SUPABASE_URL,
     SUPABASE_SERVICE_KEY: !!process.env.SUPABASE_SERVICE_KEY,
     NARA_SERVICE_KEY: !!process.env.NARA_SERVICE_KEY,
-    GOOGLE_AI_API_KEY: !!(process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY),
+    OPENROUTER_API_KEY: !!process.env.OPENROUTER_API_KEY,
   };
   const meta = { node: process.version, runtime: process.env.AWS_EXECUTION_ENV ?? null };
 

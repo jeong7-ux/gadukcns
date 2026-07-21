@@ -7,12 +7,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 // 상대경로 import 유지: 이 모듈은 Next(webpack) 외에 Netlify Background Function(esbuild)
 //   에서도 번들되므로 tsconfig paths(@/) 해석에 의존하지 않는다.
-import { chatJson, llmKey, DEFAULT_MODEL, type ChatMessage } from "../ai/google";
+import { chatJson, openRouterKey, type ChatMessage } from "../ai/openrouter";
 
 // ── 설정(env override) ──────────────────────────────────────────
 const CFG = {
   enabled: process.env.CLASSIFY_ENABLED !== "false",
-  model: process.env.CLASSIFY_MODEL || DEFAULT_MODEL,
+  model: process.env.CLASSIFY_MODEL || "anthropic/claude-haiku-4.5",
   minPrefilter: Number(process.env.CLASSIFY_MIN_PREFILTER) || 4,
   keep: Number(process.env.CLASSIFY_KEEP_THRESHOLD) || 0.8, // 강화(v1.1→): 0.6→0.8, 경계는 보류
   drop: Number(process.env.CLASSIFY_DROP_THRESHOLD) || 0.4,
@@ -20,8 +20,8 @@ const CFG = {
   concurrency: Number(process.env.CLASSIFY_CONCURRENCY) || 4,
   verify: process.env.CLASSIFY_VERIFY !== "false", // 2차 검증(adversarial) on/off
 };
-// gemini-2.5-flash 개략 단가($0.30/M in, $2.50/M out)로 1콜당 비용 추정(메타 ~500 in + ~60 out)
-const EST_COST_PER_CALL = 0.0003;
+// haiku-4.5 개략 단가로 1콜당 비용 추정(메타 ~500 in + ~60 out)
+const EST_COST_PER_CALL = 0.0006;
 
 const norm = (s: unknown) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -296,7 +296,7 @@ export async function classifyBids(rows: RawBid[], ctx: ClassifyContext): Promis
   const decisions: Decision[] = [];
 
   // 게이트 비활성/키 없음 → 전량 통과(기존 동작 폴백)
-  if (!CFG.enabled || !llmKey()) {
+  if (!CFG.enabled || !openRouterKey()) {
     for (const row of rows) keep.push({ row, biz_category: null, needs_review: false, confidence: null, reason: null, method: "rule" });
     stats.candidates = rows.length;
     return { keep, decisions, stats };

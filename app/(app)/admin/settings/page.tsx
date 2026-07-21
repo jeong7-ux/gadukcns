@@ -25,11 +25,7 @@ export default function SettingsPage() {
 const KEYS: { key: string; label: string; desc: string }[] = [
   { key: "narat_api", label: "나라장터 API 키", desc: "입찰공고 수집(collect.mjs)" },
   { key: "supabase_key", label: "DB API (Supabase Service Key)", desc: "서버 적재" },
-  {
-    key: "llm_key",
-    label: "AI API (Google AI Studio)",
-    desc: "Gemini — 수집 시 AI 사업분류·공고 요약 (env: GOOGLE_AI_API_KEY)",
-  },
+  { key: "llm_key", label: "AI API (OpenRouter)", desc: "요약·임베딩(ai.mjs)" },
 ];
 
 function SettingsInner() {
