@@ -240,7 +240,9 @@ async function verifyKeep(bid: RawBid): Promise<boolean> {
         { role: "system", content: sys },
         { role: "user", content: user },
       ],
-      { model: CFG.model, maxTokens: 120 }
+      // reasoning 모델은 답변 전 추론 토큰을 먼저 소비한다(실측 ~110). 120이면
+      // 추론만으로 소진돼 finish_reason=length로 잘리므로 320 이상을 준다.
+      { model: CFG.model, maxTokens: 320 }
     );
     if (out && typeof out.keep === "boolean") return out.keep;
   } catch {

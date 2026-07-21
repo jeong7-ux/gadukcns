@@ -141,7 +141,8 @@ async function verifyLLM(b) {
       if (attempt) await new Promise((r) => setTimeout(r, 700));
       const res = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
         method: 'POST', headers: { Authorization: `Bearer ${OPENROUTER_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: CLASSIFY_MODEL, temperature: 0, max_tokens: 120, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }),
+        // max_tokens 320: reasoning 모델은 답변 전 추론 토큰을 소비(실측 ~110)하므로 120이면 잘린다
+        body: JSON.stringify({ model: CLASSIFY_MODEL, temperature: 0, max_tokens: 320, messages: [{ role: 'system', content: sys }, { role: 'user', content: user }] }),
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const j = await res.json(); let t = j?.choices?.[0]?.message?.content?.trim() ?? '';
