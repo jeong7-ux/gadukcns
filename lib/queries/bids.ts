@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bid, KeywordGroup } from "@/lib/supabase/types";
 import type { BidFilters } from "@/components/bids/FilterBar";
 import { coreScore } from "@/lib/queries/score";
+import { keepLatestSeq } from "@/lib/queries/dedupe";
 
 const BID_COLS =
   "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,biz_category,updated_at";
@@ -72,7 +73,8 @@ export async function fetchBids(
 
   const { data, error } = await q;
   if (error) throw error;
-  const bids = (data as Bid[]) ?? [];
+  // 정정·변경공고(같은 공고번호의 새 차수)는 최신 차수만 노출 — 목록 중복 방지
+  const bids = keepLatestSeq((data as Bid[]) ?? []);
 
   // 첨부 개수 부착 (bid_attachments) — 카드에 '첨부 N' 표시용
   if (bids.length > 0) {

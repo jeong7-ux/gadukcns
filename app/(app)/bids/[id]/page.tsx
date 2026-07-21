@@ -82,7 +82,9 @@ export default function BidDetailPage() {
         .from("bids")
         .select(BID_COLS)
         .eq("bid_no", bidNo)
-        .order("bid_seq", { ascending: true })
+        // 정정·변경공고는 같은 공고번호의 새 차수로 발급된다 → 최신 차수가 유효 내용
+        // (목록도 keepLatestSeq로 최신 차수만 노출하므로 기준 일치. 첨부 쿼리도 desc)
+        .order("bid_seq", { ascending: false })
         .limit(1)
         .maybeSingle();
       if (error) throw error;

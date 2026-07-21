@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { coreScore } from "@/lib/queries/score";
+import { keepLatestSeq } from "@/lib/queries/dedupe";
 
 // S-10 대시보드 v3 집계용 원천 데이터 로드. 미아카이브 + 마감전 공고 + 부가 데이터를 병렬 조회.
 export interface DashboardData {
@@ -101,7 +102,12 @@ export async function fetchDashboardData(
   const attSet = new Set<string>();
   for (const a of (attRes.data as { bid_no: string }[] | null) ?? []) attSet.add(a.bid_no);
 
-  const bids: DashBid[] = ((bidsRes.data as Record<string, unknown>[] | null) ?? []).map((b) => ({
+  // 정정·변경공고(같은 공고번호의 새 차수)는 최신 차수만 노출 — 목록 중복 및 KPI/도넛 과다계상 방지
+  const bidRows = keepLatestSeq(
+    ((bidsRes.data as (Record<string, unknown> & { bid_no: string; bid_seq: string })[] | null) ?? [])
+  );
+
+  const bids: DashBid[] = bidRows.map((b) => ({
     bid_no: b.bid_no as string,
     bid_seq: b.bid_seq as string,
     title: (b.title as string) ?? null,
