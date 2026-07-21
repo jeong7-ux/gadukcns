@@ -1,12 +1,13 @@
 // 온디맨드 AI 요약 (FR-06 실시간) — S-06에서 요약 없을 때 호출.
-// 브라우저(anon)는 LLM·bids write 불가 → 서버에서 service_key + OpenRouter로 생성·저장.
+// 브라우저(anon)는 LLM·bids write 불가 → 서버에서 service_key + Google AI Studio로 생성·저장.
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { chat, llmKey, DEFAULT_MODEL } from "@/lib/ai/google";
 
 export const runtime = "nodejs";
 
-const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
-const LLM_MODEL = process.env.AI_LLM_MODEL || "anthropic/claude-haiku-4.5";
+// 요약은 분류(CLASSIFY_MODEL)와 독립적으로 지정한다.
+const LLM_MODEL = process.env.AI_LLM_MODEL || DEFAULT_MODEL;
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,9 +18,11 @@ export async function POST(req: NextRequest) {
     const url = process.env.SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_KEY;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const orKey = process.env.OPENROUTER_API_KEY;
-    if (!url || !serviceKey || !orKey) {
-      return NextResponse.json({ error: "서버 환경변수(SUPABASE/OPENROUTER)가 설정되지 않았습니다." }, { status: 500 });
+    if (!url || !serviceKey || !llmKey()) {
+      return NextResponse.json(
+        { error: "서버 환경변수(SUPABASE/GOOGLE_AI_API_KEY)가 설정되지 않았습니다." },
+        { status: 500 }
+      );
     }
 
     // 인증: 요청자 세션 검증 (active 사용자만 허용)
@@ -67,23 +70,22 @@ export async function POST(req: NextRequest) {
       "위 정보를 3~5줄 불릿으로 요약한 뒤, '**핵심 요건**' 제목과 함께 항목별(과업범위/참가자격/사업규모/평가방식/주요 일정) Markdown 표를 작성하세요.",
     ].join("\n");
 
-    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: LLM_MODEL,
-        messages: [
+    let summary: string;
+    try {
+      // 요약은 표(Markdown)까지 생성하므로 분류 호출보다 출력 상한을 넉넉히 준다.
+      summary = await chat(
+        [
           { role: "system", content: sys },
           { role: "user", content: userMsg },
         ],
-        temperature: 0.2,
-      }),
-    });
-    if (!r.ok) {
-      return NextResponse.json({ error: `LLM 호출 실패: ${(await r.text()).slice(0, 200)}` }, { status: 502 });
+        { model: LLM_MODEL, temperature: 0.2, maxTokens: 2000 }
+      );
+    } catch (e) {
+      return NextResponse.json(
+        { error: `LLM 호출 실패: ${(e as Error).message.slice(0, 200)}` },
+        { status: 502 }
+      );
     }
-    const j = await r.json();
-    const summary: string | undefined = j?.choices?.[0]?.message?.content?.trim();
     if (!summary) return NextResponse.json({ error: "요약 생성에 실패했습니다." }, { status: 502 });
 
     // 저장 (ai_flags 병합)

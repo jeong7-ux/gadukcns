@@ -20,9 +20,16 @@ import crypto from 'node:crypto';
 // ---------------------------------------------------------------------
 // 0. 설정 / 상수
 // ---------------------------------------------------------------------
-const OPENROUTER_BASE = process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
+// LLM(요약/브리핑) = Google AI Studio(Gemini). 임베딩 = bge-m3 유지(벡터공간 보존).
+const GOOGLE_BASE = process.env.GOOGLE_AI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta';
+const LLM_MODEL = process.env.AI_LLM_MODEL || 'gemini-2.5-flash';
+const GEMINI_THINKING_BUDGET = process.env.GEMINI_THINKING_BUDGET === undefined
+  ? 0 : Number(process.env.GEMINI_THINKING_BUDGET);
+
+// 임베딩은 계약(vector(1024)) 유지를 위해 bge-m3 그대로 — 기존 저장 벡터와 같은 공간이어야
+// 유사도(ai_score/인력매칭)가 성립한다. 따라서 임베딩만 OpenRouter 경로를 남긴다.
+const EMBED_BASE = process.env.EMBED_BASE_URL || process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1';
 const EMBED_MODEL = process.env.AI_EMBED_MODEL || 'baai/bge-m3';       // 1024차원 고정
-const LLM_MODEL = process.env.AI_LLM_MODEL || 'anthropic/claude-haiku-4.5'; // OpenRouter 라우팅 (유효 ID)
 const EMBED_DIM = 1024;                                                 // 계약: vector(1024)
 
 const BATCH_LIMIT = Number(process.env.AI_BATCH_LIMIT || 200);         // 1회 처리 상한
@@ -53,11 +60,13 @@ function decryptAesGcm(buf, masterKeyB64) {
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
 }
 
-// OpenRouter 키: Secrets(OPENROUTER_API_KEY) 우선, 없으면 app_settings.llm_key(암호화) 복호화
-async function loadOpenRouterKey(sb) {
-  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
+// LLM 키(Google AI Studio): Secrets(GOOGLE_AI_API_KEY) 우선,
+//   없으면 S-13에 저장된 app_settings.llm_key(암호화) 복호화
+async function loadLlmKey(sb) {
+  if (process.env.GOOGLE_AI_API_KEY) return process.env.GOOGLE_AI_API_KEY;
+  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
   const masterKey = process.env.APP_MASTER_KEY;
-  if (!masterKey) throw new Error('OPENROUTER_API_KEY 또는 APP_MASTER_KEY(+app_settings.llm_key)가 필요합니다.');
+  if (!masterKey) throw new Error('GOOGLE_AI_API_KEY 또는 APP_MASTER_KEY(+app_settings.llm_key)가 필요합니다.');
   const { data, error } = await sb
     .from('app_settings')
     .select('value_enc')
@@ -71,18 +80,23 @@ async function loadOpenRouterKey(sb) {
 }
 
 // ---------------------------------------------------------------------
-// 2. OpenRouter 호출 (재시도 1회)
+// 2. LLM(Gemini) / 임베딩(bge-m3) 호출 (각 재시도 1회)
 // ---------------------------------------------------------------------
-let OR_KEY = null; // 로드 후 주입 (로그 금지)
+let LLM_KEY = null;   // Google AI Studio 키 (로그 금지)
+let EMBED_KEY = null; // 임베딩 제공자 키 (로그 금지)
 
-async function orFetch(path, body, tries = 2) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 임베딩 전용 OpenAI 호환 호출 (bge-m3 벡터공간 유지)
+async function embedFetch(body, tries = 2) {
+  if (!EMBED_KEY) throw new Error('임베딩 키(EMBED_API_KEY 또는 OPENROUTER_API_KEY)가 없습니다.');
   let lastErr;
   for (let i = 0; i < tries; i++) {
     try {
-      const res = await fetch(`${OPENROUTER_BASE}${path}`, {
+      const res = await fetch(`${EMBED_BASE}/embeddings`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${OR_KEY}`,
+          Authorization: `Bearer ${EMBED_KEY}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://narajangteo.internal',
           'X-Title': 'narajangteo-ai-enrichment',
@@ -91,7 +105,7 @@ async function orFetch(path, body, tries = 2) {
       });
       if (!res.ok) {
         const t = await res.text();
-        throw new Error(`OpenRouter ${path} ${res.status}: ${t.slice(0, 300)}`);
+        throw new Error(`embeddings ${res.status}: ${t.slice(0, 300)}`);
       }
       return await res.json();
     } catch (e) {
@@ -102,12 +116,58 @@ async function orFetch(path, body, tries = 2) {
   throw lastErr;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Gemini generateContent 호출. messages(OpenAI 스타일) → contents/systemInstruction 변환.
+async function geminiFetch(messages, opts = {}, tries = 2) {
+  if (!LLM_KEY) throw new Error('GOOGLE_AI_API_KEY 가 없습니다.');
+  const sys = messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n').trim();
+  const contents = messages
+    .filter((m) => m.role !== 'system')
+    .map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
+  // Gemini 2.5는 기본으로 사고가 켜져 있어 출력 상한을 사고 토큰이 먼저 소진할 수 있다.
+  //   → 기본 예산 0(비활성). pro 계열은 0 불가라 미지정으로 폴백.
+  const useThinking =
+    Number.isFinite(GEMINI_THINKING_BUDGET) &&
+    GEMINI_THINKING_BUDGET >= 0 &&
+    !(GEMINI_THINKING_BUDGET === 0 && /pro/i.test(LLM_MODEL));
+  const body = {
+    contents: contents.length ? contents : [{ role: 'user', parts: [{ text: sys }] }],
+    ...(sys && contents.length ? { systemInstruction: { parts: [{ text: sys }] } } : {}),
+    generationConfig: {
+      temperature: opts.temperature ?? 0.2,
+      maxOutputTokens: opts.max_tokens ?? 2000,
+      ...(useThinking ? { thinkingConfig: { thinkingBudget: GEMINI_THINKING_BUDGET } } : {}),
+    },
+  };
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    try {
+      const res = await fetch(
+        `${GOOGLE_BASE}/models/${encodeURIComponent(LLM_MODEL)}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'x-goog-api-key': LLM_KEY, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }
+      );
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Gemini ${res.status}: ${t.slice(0, 300)}`);
+      }
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await sleep(800 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
 
 // 임베딩 (배치 입력 지원). 반환: number[][] (각 1024차원)
+//   임베딩 키가 없으면 null 배열을 돌려준다 — 호출부가 임베딩 없이 진행(요약/룰 스코어는 유지).
 async function embed(inputs) {
   if (inputs.length === 0) return [];
-  const json = await orFetch('/embeddings', { model: EMBED_MODEL, input: inputs });
+  if (!EMBED_KEY) return inputs.map(() => null);
+  const json = await embedFetch({ model: EMBED_MODEL, input: inputs });
   const vecs = (json.data || []).map((d) => d.embedding);
   for (const v of vecs) {
     if (!Array.isArray(v) || v.length !== EMBED_DIM) {
@@ -120,13 +180,9 @@ async function embed(inputs) {
 
 // LLM 요약
 async function chat(messages, opts = {}) {
-  const json = await orFetch('/chat/completions', {
-    model: LLM_MODEL,
-    messages,
-    temperature: opts.temperature ?? 0.2,
-    max_tokens: opts.max_tokens ?? 700,
-  });
-  return json.choices?.[0]?.message?.content?.trim() || '';
+  const json = await geminiFetch(messages, opts);
+  const parts = json.candidates?.[0]?.content?.parts ?? [];
+  return parts.map((p) => p?.text ?? '').join('').trim();
 }
 
 // ---------------------------------------------------------------------
@@ -292,7 +348,7 @@ function buildSummaryMessages(bid) {
 
 async function summarizeBid(bid) {
   try {
-    const out = await chat(buildSummaryMessages(bid)); // orFetch가 내부 1회 재시도
+    const out = await chat(buildSummaryMessages(bid)); // geminiFetch가 내부 1회 재시도
     if (out && out.length > 20) return { summary: out, ok: true };
   } catch (e) {
     console.warn(`[warn] 요약 실패 ${bid.bid_no}: ${e.message}`);
@@ -416,7 +472,11 @@ async function main() {
   const SUPABASE_SERVICE_KEY = required('SUPABASE_SERVICE_KEY');
   const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, { auth: { persistSession: false } });
 
-  OR_KEY = await loadOpenRouterKey(sb);
+  LLM_KEY = await loadLlmKey(sb);
+  EMBED_KEY = process.env.EMBED_API_KEY || process.env.OPENROUTER_API_KEY || null;
+  if (!EMBED_KEY) {
+    console.warn('[warn] 임베딩 키 없음(EMBED_API_KEY/OPENROUTER_API_KEY) → 임베딩·유사도 스코어 생략');
+  }
 
   const rules = await loadRules(sb);
   const interestVec = await loadInterestVector(sb, rules);
@@ -448,9 +508,10 @@ async function main() {
 
       // --- 2b) 첨부 임베딩 (embedding 없는 것만 — 멱등) ---
       const attNeed = (bid._atts || []).filter((a) => a.extracted_text && !a.embedding);
-      if (attNeed.length > 0) {
+      if (attNeed.length > 0 && EMBED_KEY) {
         const avs = await embed(attNeed.map((a) => a.extracted_text.slice(0, EMBED_INPUT_MAX)));
         for (let i = 0; i < attNeed.length; i++) {
+          if (!avs[i]) continue;
           const { error } = await sb.from('bid_attachments')
             .update({ embedding: toVectorLiteral(avs[i]) }).eq('id', attNeed[i].id);
           if (error) console.warn(`[warn] 첨부 임베딩 저장 실패 id=${attNeed[i].id}: ${error.message}`);
@@ -462,7 +523,7 @@ async function main() {
 
       // --- 4) 스코어링 ---
       const { score, breakdown, tags } = scoreBid(bid, rules);
-      const aiScore = interestVec ? Math.round(Math.max(0, cosine(bidVec, interestVec)) * 100) : 0;
+      const aiScore = bidVec && interestVec ? Math.round(Math.max(0, cosine(bidVec, interestVec)) * 100) : 0;
       const alert = score >= SCORE_THRESHOLD || aiScore >= AI_THRESHOLD;
 
       // --- 5) 인력매칭 ---
@@ -471,10 +532,10 @@ async function main() {
       // --- ai_flags 조립 (멱등 마커 + S-06 부가정보) ---
       const ai_flags = {
         src_hash: bid._srcHash,
-        embedded: true,
+        embedded: !!bidVec,
         summary_ok: summaryOk,
         enriched_at: new Date().toISOString(),
-        model: { embed: EMBED_MODEL, llm: LLM_MODEL },
+        model: { embed: bidVec ? EMBED_MODEL : null, llm: LLM_MODEL },
         alert,
         thresholds: { score: SCORE_THRESHOLD, ai_score: AI_THRESHOLD },
         score_breakdown: breakdown,
@@ -482,7 +543,7 @@ async function main() {
       };
 
       await updateBid(sb, bid, {
-        embedding: toVectorLiteral(bidVec),
+        ...(bidVec ? { embedding: toVectorLiteral(bidVec) } : {}),
         ai_summary: summary,
         score,
         ai_score: aiScore,
