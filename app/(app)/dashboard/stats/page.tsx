@@ -30,7 +30,7 @@ import { useRealtimeInvalidate } from "@/lib/hooks/useRealtimeInvalidate";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { CollectButton } from "@/components/dashboard/CollectButton";
-import { ddayInfo, type DdayBucket } from "@/lib/design/dday";
+import { ddayInfo, DEADLINE_BUCKETS, type DdayBucket } from "@/lib/design/dday";
 import { InfoCells, InfoHeaders } from "@/components/bids/InfoRowCells";
 
 const DAY = 86400000;
@@ -413,14 +413,14 @@ function compute(d: DashboardData) {
     watch: d.watch.length, // 관심 등록(watchlist) 건수
   };
 
-  // ── 입찰 진행 현황 (도넛 — 마감 임박도) ──
-  const donut = [
-    { key: "today", label: "오늘 마감", value: rows.filter((b) => b.dd === 0).length, colorVar: "--color-dday-urgent", fb: "#dc2626" },
-    { key: "soon", label: "임박 (1~3일)", value: rows.filter((b) => b.dd !== null && b.dd >= 1 && b.dd <= 3).length, colorVar: "--color-dday-soon", fb: "#f97316" },
-    { key: "week", label: "이번주 (4~7일)", value: rows.filter((b) => b.dd !== null && b.dd >= 4 && b.dd <= 7).length, colorVar: "--color-dday-near", fb: "#eab308" },
-    { key: "far", label: "여유 (8일+)", value: rows.filter((b) => b.dd !== null && b.dd >= 8).length, colorVar: "--color-success", fb: "#16a34a" },
-    { key: "none", label: "마감 미정", value: rows.filter((b) => b.dd === null).length, colorVar: "--color-text-subtle", fb: "#94a3b8" },
-  ].filter((x) => x.value > 0);
+  // ── 입찰 진행 현황 (도넛 — 마감 임박도). 구간은 S-04 상태 필터와 공용(DEADLINE_BUCKETS) ──
+  const donut = DEADLINE_BUCKETS.map((b) => ({
+    key: b.key,
+    label: b.label,
+    value: rows.filter((r) => b.match(r.dd)).length,
+    colorVar: b.colorVar,
+    fb: b.fb,
+  })).filter((x) => x.value > 0);
 
   // ── 입찰 목록 (수집일=공고 등록일 기준 최신순). 탭(전체/감리/컨설팅)은 FeedTable에서 분기 ──
   const feed = [...rows].sort((a, b) => {

@@ -60,6 +60,23 @@ export function deriveStatus(deadline: string | Date | null): BidStatus | null {
   return "closed";
 }
 
+/**
+ * 마감 임박도 구간 — S-10 '입찰 마감 현황' 도넛과 S-04 상태 필터 **공용 정의**.
+ * 두 화면의 구간이 어긋나지 않도록 경계를 한 곳에서만 정한다.
+ *   `label` = 도넛 범례(기존 표기 유지) · `chip` = 필터 칩(압축 표기)
+ * 입력 `days`는 **유효 마감**(deadline_dt ?? open_dt) 기준 D-day여야 한다.
+ * 위 `ddayBucket`(0~3/4~6/7~9/10+)은 pill 색상용 구간으로 목적이 달라 그대로 둔다.
+ */
+export const DEADLINE_BUCKETS = [
+  { key: "today", label: "오늘 마감", chip: "오늘마감", colorVar: "--color-dday-urgent", fb: "#dc2626", match: (d: number | null) => d === 0 },
+  { key: "soon", label: "임박 (1~3일)", chip: "임박 1~3일", colorVar: "--color-dday-soon", fb: "#f97316", match: (d: number | null) => d !== null && d >= 1 && d <= 3 },
+  { key: "week", label: "이번주 (4~7일)", chip: "이번주 4~7일", colorVar: "--color-dday-near", fb: "#eab308", match: (d: number | null) => d !== null && d >= 4 && d <= 7 },
+  { key: "far", label: "여유 (8일+)", chip: "여유 8일+", colorVar: "--color-success", fb: "#16a34a", match: (d: number | null) => d !== null && d >= 8 },
+  { key: "none", label: "마감 미정", chip: "마감 미정", colorVar: "--color-text-subtle", fb: "#94a3b8", match: (d: number | null) => d === null },
+] as const;
+
+export type DeadlineBucketKey = (typeof DEADLINE_BUCKETS)[number]["key"];
+
 /** 배경/텍스트용 Tailwind 클래스 (pill) */
 export const DDAY_PILL_CLASS: Record<DdayBucket, string> = {
   urgent: "bg-dday-urgent/10 text-dday-urgent ring-1 ring-dday-urgent/30",
