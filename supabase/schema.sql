@@ -94,20 +94,26 @@ create index if not exists idx_bids_status   on bids(status);
 create index if not exists idx_bids_embed
   on bids using ivfflat (embedding vector_cosine_ops) with (lists = 100);
 
--- FR-14 마감상태 재계산 (일 배치 07:00에 RPC로 1회 호출; 날짜 경계에서만 값 변동).
+-- FR-14 마감상태 재계산 (수집 실행 시 RPC로 호출; 날짜 경계에서만 값 변동).
 -- 일반 UPDATE라 immutability 제약과 무관. 서버측 .eq('status',...) 필터를 당일 기준으로 신선화.
+--
+-- 기준 = **유효 마감** coalesce(deadline_dt, open_dt).
+--   나라장터는 협상계약류 공고에 bidClseDt를 빈 문자열로 주는 경우가 있어 deadline_dt가 null이 된다
+--   (실측 30/30). 이때 opengDt(개찰일시)는 항상 있으므로 이를 폴백 기준으로 쓴다 —
+--   앱의 노출 필터(lib/queries/deadline.ts notClosedOr)·D-day 표시와 **동일 기준**.
+--   둘 다 없으면 판단 근거가 없으므로 null(fail-open).
 create or replace function refresh_bids_status() returns void
 language sql
 as $$
   update bids set status =
-    case when deadline_dt is null then null
-         when deadline_dt::date > current_date then 'ongoing'
-         when deadline_dt::date = current_date then 'today'
+    case when coalesce(deadline_dt, open_dt) is null then null
+         when coalesce(deadline_dt, open_dt)::date > current_date then 'ongoing'
+         when coalesce(deadline_dt, open_dt)::date = current_date then 'today'
          else 'closed' end
   where status is distinct from
-    (case when deadline_dt is null then null
-          when deadline_dt::date > current_date then 'ongoing'
-          when deadline_dt::date = current_date then 'today'
+    (case when coalesce(deadline_dt, open_dt) is null then null
+          when coalesce(deadline_dt, open_dt)::date > current_date then 'ongoing'
+          when coalesce(deadline_dt, open_dt)::date = current_date then 'today'
           else 'closed' end);
 $$;
 
