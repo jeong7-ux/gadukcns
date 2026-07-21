@@ -2,7 +2,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Bid, KeywordGroup } from "@/lib/supabase/types";
 import type { BidFilters } from "@/components/bids/FilterBar";
 import { coreScore } from "@/lib/queries/score";
-import { keepLatestSeq } from "@/lib/queries/dedupe";
+import { keepLatestSeq, collapseRebids } from "@/lib/queries/dedupe";
+import { notClosedOr } from "@/lib/queries/deadline";
 
 const BID_COLS =
   "bid_no,bid_seq,title,order_org,demand_org,contract_method,notice_dt,deadline_dt,open_dt,est_price,status,score,tags,ai_summary,ai_score,ai_flags,biz_category,updated_at";
@@ -31,7 +32,7 @@ export async function fetchBids(
     .from("bids")
     .select(BID_COLS)
     .is("archived_at", null) // 정리(아카이브)된 공고 숨김
-    .or(`deadline_dt.gte.${todayStr},deadline_dt.is.null`) // 입찰 마감 사업 제외(마감일 미정은 유지)
+    .or(notClosedOr(todayStr)) // 입찰 마감 사업 제외(마감 미정은 개찰일로 판정 — lib/queries/deadline.ts)
     // FR-18: 고객사(org 룰 가중) 공고가 상단에 오도록 점수 우선, 그다음 최신순
     .order("score", { ascending: false })
     .order("notice_dt", { ascending: false })
@@ -73,8 +74,8 @@ export async function fetchBids(
 
   const { data, error } = await q;
   if (error) throw error;
-  // 정정·변경공고(같은 공고번호의 새 차수)는 최신 차수만 노출 — 목록 중복 방지
-  const bids = keepLatestSeq((data as Bid[]) ?? []);
+  // 중복 정리: ① 정정·변경공고는 최신 차수만(같은 공고번호) ② 재공고는 최신 1건만(새 공고번호)
+  const bids = collapseRebids(keepLatestSeq((data as Bid[]) ?? []));
 
   // 첨부 개수 부착 (bid_attachments) — 카드에 '첨부 N' 표시용
   if (bids.length > 0) {
