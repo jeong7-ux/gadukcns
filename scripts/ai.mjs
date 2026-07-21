@@ -218,7 +218,10 @@ async function loadRules(sb) {
 async function loadInterestVector(sb, rules) {
   const { data: groups } = await sb.from('keyword_groups').select('keywords');
   const terms = new Set();
-  for (const r of rules) if (r.type === 'keyword' || r.type === 'org' || r.type === 'contract') terms.add(r.pattern);
+  // org(발주기관명)은 제외한다. 고객사 우대는 scoreBid의 agencyBonus로 이미 결정적으로 반영되고,
+  // 기관명 39개를 의미벡터에 섞으면 "공공기관 문서" 신호가 도메인 신호를 희석해 판별력이 떨어진다.
+  // 실측(메타+본문 기준 IT감리 − 최고오탐): 병합 58term +0.126 → org 제거 19term +0.163.
+  for (const r of rules) if (r.type === 'keyword' || r.type === 'contract') terms.add(r.pattern);
   for (const g of groups || []) for (const k of g.keywords || []) terms.add(k);
   const query = [...terms].join(', ');
   if (!query) {
