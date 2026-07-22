@@ -142,7 +142,7 @@ function SummaryKpis({ m, canWatch }: { m: Metrics; canWatch: boolean }) {
         }
       />
       <div className="grid grid-cols-2 gap-4 p-5">
-        <KpiTile label="당일신규" value={m.kpi.todayNew} tone="text-success" href="/dashboard?new=today" />
+        <KpiTile label="오늘 공고" value={m.kpi.todayNew} tone="text-success" href="/dashboard?new=today" />
         <KpiTile label="감리" value={m.kpi.gamri} tone="text-primary" href="/dashboard?cat=감리" />
         <KpiTile label="컨설팅" value={m.kpi.consult} tone="text-accent" href="/dashboard?cat=컨설팅" />
         <KpiTile label="전체공고" value={m.kpi.total} tone="text-text" href="/dashboard?view=all" />
@@ -402,7 +402,7 @@ function compute(d: DashboardData) {
     };
   });
 
-  // ── 오늘의 주요 공고 요약 (2×2): 당일신규 · 감리 · 컨설팅 · 전체공고 ──
+  // ── 오늘의 주요 공고 요약 (2×2): 오늘 공고(공고일=오늘) · 감리 · 컨설팅 · 전체공고 ──
   const todayD = new Date();
   const isToday = (b: Row) => (b.notice_dt ? sameDay(new Date(b.notice_dt), todayD) : false);
   const kpi = {
@@ -422,11 +422,16 @@ function compute(d: DashboardData) {
     fb: b.fb,
   })).filter((x) => x.value > 0);
 
-  // ── 입찰 목록 (수집일=공고 등록일 기준 최신순). 탭(전체/감리/컨설팅)은 FeedTable에서 분기 ──
+  // ── 입찰 목록 (수집일=최근 upsert 시각 기준 최신순). 방금 수집한 공고가 최상단.
+  //   재수집으로 갱신된 기존 공고도 상단으로 올라온다(사용자 선택). 동시각이면 공고일로 tie-break.
+  //   탭(전체/감리/컨설팅)은 FeedTable에서 분기.
   const feed = [...rows].sort((a, b) => {
-    const ta = a.notice_dt ? new Date(a.notice_dt).getTime() : 0;
-    const tb = b.notice_dt ? new Date(b.notice_dt).getTime() : 0;
-    return tb - ta; // 수집일 최신순
+    const ta = a.updated_at ? new Date(a.updated_at).getTime() : 0;
+    const tb = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    if (tb !== ta) return tb - ta; // 수집일(updated_at) 최신순
+    const na = a.notice_dt ? new Date(a.notice_dt).getTime() : 0;
+    const nb = b.notice_dt ? new Date(b.notice_dt).getTime() : 0;
+    return nb - na; // tie-break: 공고일 최신순
   });
 
   // ── 분류별 입찰 공고 추이 (일별 신규 등록, 21일) — 감리 / 컨설팅 ──

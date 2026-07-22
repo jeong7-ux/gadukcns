@@ -37,6 +37,7 @@ export interface DashBid {
   rescored_at: string | null;
   biz_category: "감리" | "컨설팅" | null; // 수집 시 AI 분류(권위값). null이면 프론트 키워드 분류 폴백
   needs_review: boolean;
+  updated_at: string | null; // 최근 수집(upsert) 시각 — 목록 '수집일 최신순' 정렬 기준
 }
 export interface DashClient {
   name: string;
@@ -81,7 +82,7 @@ export async function fetchDashboardData(
     supabase
       .from("bids")
       .select(
-        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,open_dt,est_price,score,ai_score,ai_summary,tags,ai_flags,biz_category,classify"
+        "bid_no,bid_seq,title,order_org,demand_org,status,notice_dt,deadline_dt,open_dt,est_price,score,ai_score,ai_summary,tags,ai_flags,biz_category,classify,updated_at"
       )
       .is("archived_at", null)
       .or(notClosed) // 마감된 사업 제외
@@ -144,6 +145,7 @@ export async function fetchDashboardData(
     rescored_at: ((b.ai_flags as Record<string, unknown> | null)?.rescored_at as string) ?? null,
     biz_category: (b.biz_category as "감리" | "컨설팅" | null) ?? null,
     needs_review: !!(b.classify as Record<string, unknown> | null)?.needs_review,
+    updated_at: (b.updated_at as string) ?? null,
   }));
 
   return {
